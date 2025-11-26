@@ -1,0 +1,8 @@
+flask
+pandas
+numpy
+colour-science
+openpyxl
+beautifulsoup4
+reportlab
+gunicorn
