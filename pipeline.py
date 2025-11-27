@@ -6,14 +6,12 @@ import colour
 
 def process_plate(excel_file, reference_well=None):
     """
-    Run the full spectral→XYZ→Lab→ΔE pipeline on a plate .xlsx file.
+    Full spectral → XYZ → Lab → ΔE pipeline for 96-well plates.
 
-    excel_file can be:
-      - a file path (str)
-      - a file-like object (e.g. from Flask upload)
-
-    Returns: pandas DataFrame with columns:
-      Well, X, Y, Z, L*, a*, b*, DeltaE_vs_<reference>
+    Returns:
+        df_results        = DataFrame with color metrics
+        available_wells   = list of actual detected well IDs
+        reference_well    = the reference well used for ΔE
     """
 
     # -------------------------------------------------
@@ -21,7 +19,7 @@ def process_plate(excel_file, reference_well=None):
     # -------------------------------------------------
     raw = pd.read_excel(excel_file, header=None)
 
-    # Detect the row that contains the real "Wavelength" header
+    # Detect the row that contains “Wavelength”
     header_row_index = None
     for i in range(len(raw)):
         row = raw.iloc[i].astype(str).str.lower()
@@ -33,37 +31,38 @@ def process_plate(excel_file, reference_well=None):
         raise ValueError("Could not find a 'Wavelength' header row automatically.")
 
     # -------------------------------------------------
-    # STEP 2 — Re-read using detected header row & clean
+    # STEP 2 — Clean the file using the detected header
     # -------------------------------------------------
     df = pd.read_excel(excel_file, header=header_row_index)
 
-    # Drop fully empty columns
-    df = df.dropna(axis=1, how="all")
-
-    # Drop "Unnamed" junk columns
+    df = df.dropna(axis=1, how="all")  # remove empty columns
     df = df.loc[:, ~df.columns.astype(str).str.contains("unnamed", case=False)]
 
-    # Keep only rows where wavelength is numeric
     df = df[pd.to_numeric(df["Wavelength"], errors="coerce").notnull()]
 
-    # Detect well columns
+    # -------------------------------------------------
+    # STEP 3 — Detect actual well columns
+    # -------------------------------------------------
     available_wells = []
+
     for col in df.columns:
-        col_str = str(col)
-        if len(col_str) >= 2 and col_str[0].isalpha() and col_str[1:].isdigit():
-            available_wells.append(col_str)
+        name = str(col)
+        if len(name) >= 2 and name[0].isalpha() and name[1:].isdigit():
+            available_wells.append(name)
 
     if not available_wells:
         raise ValueError("No well columns detected in this file.")
 
-    # Use first well as reference if none given
+    # Decide reference well
     if reference_well is None:
-        reference_well = available_wells[0]
-    if reference_well not in available_wells:
-        raise ValueError(f"Reference well {reference_well} not found in data.")
+        # Prefer A10 if available
+        reference_well = "A10" if "A10" in available_wells else available_wells[0]
+    else:
+        if reference_well not in available_wells:
+            raise ValueError(f"Reference well {reference_well} not in dataset.")
 
     # -------------------------------------------------
-    # STEP 3 — Prepare wavelength axis & illuminant D65
+    # STEP 4 — Prepare illuminant + spectral shape
     # -------------------------------------------------
     wavelengths = df["Wavelength"].values.astype(float)
     interval = wavelengths[1] - wavelengths[0]
@@ -83,27 +82,21 @@ def process_plate(excel_file, reference_well=None):
         "CIE 1931 2 Degree Standard Observer"
     ]["D65"]
 
-    # Helper function for a single well
-    def compute_xyz_lab_for_well(well_name: str):
+    # Helper to compute color for each well
+    def compute_xyz_lab_for_well(well_name):
         absorbance = df[well_name].values.astype(float)
         transmittance = 10 ** (-absorbance)
 
         sample_sd = colour.SpectralDistribution(
-            data=illuminant_sd.values * transmittance,
-            domain=domain
+            data=illuminant_sd.values * transmittance, domain=domain
         )
 
-        XYZ = colour.sd_to_XYZ(
-            sample_sd,
-            illuminant=illuminant_sd,
-            method="Integration"
-        )
-
+        XYZ = colour.sd_to_XYZ(sample_sd, illuminant=illuminant_sd)
         Lab = colour.XYZ_to_Lab(XYZ, whitepoint_D65)
         return XYZ, Lab
 
     # -------------------------------------------------
-    # STEP 4 — Compute XYZ + Lab for all wells
+    # STEP 5 — Compute colors for all wells
     # -------------------------------------------------
     results = []
     lab_by_well = {}
@@ -122,16 +115,18 @@ def process_plate(excel_file, reference_well=None):
         })
 
     # -------------------------------------------------
-    # STEP 5 — Compute ΔE vs reference well
+    # STEP 6 — Compute ΔE vs reference
     # -------------------------------------------------
     ref_Lab = lab_by_well[reference_well]
-    delta_col_name = f"DeltaE_vs_{reference_well}"
+    delta_col = f"DeltaE_vs_{reference_well}"
 
     for row in results:
-        well = row["Well"]
-        Lab = lab_by_well[well]
-        deltaE = colour.delta_E(ref_Lab, Lab)
-        row[delta_col_name] = float(deltaE)
+        Lab = lab_by_well[row["Well"]]
+        row[delta_col] = float(colour.delta_E(ref_Lab, Lab))
 
     df_results = pd.DataFrame(results)
-    return df_results
+
+    # -------------------------------------------------
+    # RETURN 3 things:
+    # -------------------------------------------------
+    return df_results, available_wells, reference_well

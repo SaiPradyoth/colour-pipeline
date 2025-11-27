@@ -16,6 +16,7 @@
       The system will compute CIE XYZ, CIE Lab, and ΔE values.
     </p>
 
+    <!-- Upload Form -->
     <form method="post" enctype="multipart/form-data" class="mb-4">
       <div class="mb-3">
         <label for="dataset" class="form-label">Excel File (.xlsx)</label>
@@ -36,12 +37,67 @@
     {% endif %}
 
     {% if table_html %}
+
+      <!-- Detected + Missing wells -->
+      {% if detected_wells %}
+        <p><strong>Detected wells:</strong> {{ detected_wells | join(", ") }}</p>
+      {% endif %}
+
+      {% if missing_wells %}
+        <p><strong>Missing wells:</strong> {{ missing_wells | join(", ") }}</p>
+      {% endif %}
+
+      <!-- Reference well dropdown (Option D layout) -->
+      {% if detected_wells and reference_well and file_path %}
+        <form action="/recalculate" method="post" class="mb-3">
+          <div class="row g-2 align-items-center">
+            <div class="col-auto">
+              <label for="reference_well" class="col-form-label">
+                <strong>Reference well:</strong>
+              </label>
+            </div>
+            <div class="col-auto">
+              <select
+                name="reference_well"
+                id="reference_well"
+                class="form-select form-select-sm"
+              >
+                {% for w in detected_wells %}
+                  <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>
+                    {{ w }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-auto">
+              <input type="hidden" name="file_path" value="{{ file_path }}">
+              <button type="submit" class="btn btn-secondary btn-sm">Recalculate</button>
+            </div>
+          </div>
+        </form>
+      {% endif %}
+
+      <!-- CSV Download -->
+      <form action="/download_csv" method="post" style="margin-bottom: 10px;">
+        <input type="hidden" name="data" value="{{ table_html }}">
+        <button type="submit" class="btn btn-success">Download CSV</button>
+      </form>
+
+      <!-- PDF Download -->
+      <form action="/download_pdf" method="post" style="margin-bottom: 20px;">
+        <input type="hidden" name="data" value="{{ table_html }}">
+        <button type="submit" class="btn btn-danger">Download PDF</button>
+      </form>
+
       <hr>
+
+      <!-- Results Table -->
       <h2>Results</h2>
       <p class="text-muted">ΔE is relative to the reference well.</p>
       <div class="table-responsive">
         {{ table_html|safe }}
       </div>
+
     {% endif %}
   </div>
 </body>
