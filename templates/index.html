@@ -1,726 +1,1318 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
   <title>Spectral → Color → ΔE Analyzer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <!-- Bootstrap -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- GOOGLE FONT
+       If you want to change the font, replace "Inter" here and in the CSS below.
+       For example, use "Roboto" or "Nunito" and update font-family in body. -->
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  >
 
-  <!-- Icons -->
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <!-- BOOTSTRAP 5 (for basic layout and buttons) -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  >
 
-  <!-- Fonts & Styles -->
+  <!-- CHART.JS (used to draw the spectral curve graph) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
+    /* =========================================================
+       THEME + COLORS + FONTS
+       ---------------------------------------------------------
+       💡 If "5-year-old future you" wants to change:
+
+       - overall COLORS → edit the variables in :root below
+       - LIGHT or DARK theme specifics → use the html[data-theme="..."] blocks
+       - FONT FAMILY → change font-family in body
+       - FONT SIZE (global feel) → change font-size in body or use zoom
+
+       You don’t need to touch the rest of the CSS for basic styling changes.
+       ========================================================= */
+
     :root {
-      --bg: #f7f9fc;
-      --card-bg: rgba(255, 255, 255, 0.9);
-      --text: #1a1a1a;
-      --accent: #0d6efd;
-      --border: #dde1eb;
-      --glass-border: rgba(255,255,255,0.6);
-      --sidebar-bg: #ffffff;
+      /* MAIN COLORS (change these to quickly recolor the UI) */
+      --sidebar-bg-light: #f5f7fb;
+      --sidebar-bg-dark: #111827;
+      --sidebar-border-light: #e2e8f0;
+      --sidebar-border-dark: #1f2937;
+      --bg-light: #f9fafb;
+      --bg-dark: #020617;
+      --card-bg-light: #ffffff;
+      --card-bg-dark: #020617;
+      --card-border-light: #e5e7eb;
+      --card-border-dark: #1f2937;
+      --accent: #2563eb;         /* main blue accent */
+      --accent-soft: rgba(37, 99, 235, 0.08);
+      --text-main-light: #0f172a;
+      --text-main-dark: #e5e7eb;
+      --text-muted-light: #6b7280;
+      --text-muted-dark: #9ca3af;
+      --table-header-light: #f3f4f6;
+      --table-header-dark: #111827;
+      --heat-low: #dbeafe;   /* low ΔE color */
+      --heat-high: #fecaca;  /* high ΔE color */
+      --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.22);
+      --radius-xl: 22px;
     }
 
-    [data-theme="dark"] {
-      --bg: #050609;
-      --card-bg: rgba(18, 20, 26, 0.98);
-      --text: #e9edf7;
-      --accent: #4da3ff;
-      --border: #3a3f4f;
-      --glass-border: rgba(255,255,255,0.08);
-      --sidebar-bg: #10121a;
+    /* Tells the browser we have a light theme (for scrollbars, etc.) */
+    html[data-theme="light"] {
+      color-scheme: light;
     }
 
-    * {
-      box-sizing: border-box;
+    /* Tells the browser we have a dark theme */
+    html[data-theme="dark"] {
+      color-scheme: dark;
     }
 
     body {
       margin: 0;
-      background: radial-gradient(circle at top left, #e3f2fd, var(--bg));
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-      color: var(--text);
-      transition: background 0.3s ease, color 0.3s ease;
+      min-height: 100vh;
+
+      /* 👇 CHANGE THIS to change the font everywhere */
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+      /* 👇 CHANGE THIS to scale font sizes globally (e.g., 14px → smaller, 18px → larger) */
+      font-size: 16px;
+
+      background: radial-gradient(circle at top left, #e0f2fe 0, #f9fafb 35%, #e5e7eb 100%);
+      color: var(--text-main-light);
     }
 
-    /* Layout */
-    .layout {
-      display: flex;
+    html[data-theme="dark"] body {
+      background: radial-gradient(circle at top left, #0b1120 0, #020617 50%, #050816 100%);
+      color: var(--text-main-dark);
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
       min-height: 100vh;
     }
 
-    /* Sidebar */
+    /* =========== SIDEBAR ===========
+       Change the sidebar background or border in the blocks below. */
+
     .sidebar {
-      width: 240px;
-      background: var(--sidebar-bg);
-      border-right: 1px solid var(--border);
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
       position: sticky;
       top: 0;
+      align-self: start;
       height: 100vh;
+      padding: 24px 20px;
+      border-right: 1px solid var(--sidebar-border-light);
+      background: linear-gradient(180deg, var(--sidebar-bg-light), #ffffff);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      z-index: 20;
+    }
+
+    html[data-theme="dark"] .sidebar {
+      background: radial-gradient(circle at top left, #020617, #050816);
+      border-right-color: var(--sidebar-border-dark);
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 8px 16px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 8px;
+      gap: 12px;
     }
 
     .brand-logo {
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      object-fit: contain;
-      background: #eef2ff;
-      padding: 4px;
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      background: radial-gradient(circle at 30% 0, #60a5fa, #1d4ed8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 15px 30px rgba(37, 99, 235, 0.55);
+      overflow: hidden;
+    }
+
+    .brand-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     .brand-title {
       font-weight: 700;
-      font-size: 18px;
+      letter-spacing: 0.02em;
+      font-size: 1.1rem;
     }
 
-    .nav-section-title {
-      font-size: 12px;
+    .brand-subtitle {
+      font-size: 0.78rem;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      opacity: 0.6;
-      margin: 4px 0 2px;
+      letter-spacing: 0.12em;
+      color: var(--text-muted-light);
     }
 
-    .sidebar-nav {
+    html[data-theme="dark"] .brand-subtitle {
+      color: var(--text-muted-dark);
+    }
+
+    .sidebar-section-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--text-muted-light);
+      margin-bottom: 6px;
+    }
+
+    html[data-theme="dark"] .sidebar-section-label {
+      color: var(--text-muted-dark);
+    }
+
+    .nav-list {
       list-style: none;
-      padding-left: 0;
+      padding: 0;
       margin: 0;
       display: flex;
       flex-direction: column;
       gap: 4px;
     }
 
-    .sidebar-nav li a {
+    .nav-link {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      color: var(--text);
-      text-decoration: none;
-      font-size: 14px;
+      gap: 10px;
+      padding: 8px 11px;
+      border-radius: 11px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: var(--text-muted-light);
+      border: 1px solid transparent;
+      transition: all 0.15s ease-out;
+      background: transparent;
+    }
+
+    html[data-theme="dark"] .nav-link {
+      color: var(--text-muted-dark);
+    }
+
+    .nav-link span.icon {
+      width: 20px;
+      display: inline-flex;
+      justify-content: center;
       opacity: 0.85;
-      transition: background 0.2s ease, opacity 0.2s ease, transform 0.1s;
     }
 
-    .sidebar-nav li a:hover {
-      background: rgba(13,110,253,0.08);
+    .nav-link:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .nav-link.active {
+      background: #1d4ed8;
+      color: #f9fafb;
+      border-color: rgba(15, 23, 42, 0.75);
+      box-shadow: 0 10px 25px rgba(37, 99, 235, 0.33);
+    }
+
+    .nav-link.active span.icon {
       opacity: 1;
-      transform: translateX(2px);
-    }
-
-    .sidebar-nav li a i {
-      width: 18px;
-      text-align: center;
     }
 
     .sidebar-footer {
       margin-top: auto;
-      font-size: 11px;
-      opacity: 0.6;
+      font-size: 0.78rem;
+      color: var(--text-muted-light);
     }
 
-    /* Top bar controls */
-    .top-controls {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-bottom: 12px;
+    html[data-theme="dark"] .sidebar-footer {
+      color: var(--text-muted-dark);
     }
 
-    .btn-icon {
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.9);
-      padding: 6px 10px;
+    .theme-toggle {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-top: 10px;
+      background: transparent;
+      color: inherit;
     }
 
-    /* Main Content */
-    .content {
-      flex: 1;
-      padding: 20px 24px 32px;
+    .theme-toggle-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #fbbf24, #f97316);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      color: #111827;
+    }
+
+    html[data-theme="dark"] .theme-toggle-thumb {
+      background: radial-gradient(circle at 30% 0, #38bdf8, #0ea5e9);
+      color: #e5e7eb;
+    }
+
+    /* =========== MAIN AREA =========== */
+
+    .main {
+      padding: 26px 32px 32px;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
     }
 
     .hero {
-      margin-bottom: 20px;
-      animation: fadeInUp 0.6s ease;
+      margin-bottom: 24px;
     }
 
     .hero-title {
+      font-size: clamp(2rem, 2.6vw, 2.6rem);
       font-weight: 700;
-      font-size: 30px;
-      margin-bottom: 4px;
+      letter-spacing: 0.03em;
+      background: linear-gradient(120deg, #1d4ed8, #0f766e, #7c3aed);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    html[data-theme="dark"] .hero-title {
+      /* keep title bright in dark mode */
+      background: linear-gradient(120deg, #e5f2ff, #a5f3fc, #ddd6fe);
     }
 
     .hero-subtitle {
-      font-size: 14px;
-      opacity: 0.7;
+      color: var(--text-muted-light);
+      max-width: 690px;
+      font-size: 0.95rem;
     }
 
-    /* Glass cards */
-    .glass-card {
-      background: var(--card-bg);
-      border-radius: 16px;
-      padding: 20px 22px;
-      border: 1px solid var(--glass-border);
-      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.1);
-      margin-bottom: 18px;
-      animation: fadeInUp 0.5s ease;
+    html[data-theme="dark"] .hero-subtitle {
+      color: var(--text-muted-dark);
     }
 
-    .card-header-line {
+    .page-section {
+      display: none;
+    }
+
+    .page-section.active {
+      display: block;
+    }
+
+    /* CARDS (nice rounded boxes) */
+
+    .card-elevated {
+      border-radius: var(--radius-xl);
+      padding: 22px 22px 20px;
+      border: 1px solid var(--card-border-light);
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.13);
+      backdrop-filter: blur(14px);
+    }
+
+    html[data-theme="dark"] .card-elevated {
+      background: rgba(15, 23, 42, 0.86);
+      border-color: var(--card-border-dark);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .card-header-row {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      margin-bottom: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 12px;
     }
 
     .card-title {
+      font-size: 1rem;
       font-weight: 600;
-      font-size: 18px;
     }
 
     .card-subtitle {
-      font-size: 13px;
-      opacity: 0.65;
+      font-size: 0.85rem;
+      color: var(--text-muted-light);
     }
 
-    /* Drag & drop upload */
-    .drop-zone {
-      border: 2px dashed var(--accent);
-      border-radius: 12px;
-      padding: 28px;
+    html[data-theme="dark"] .card-subtitle {
+      color: var(--text-muted-dark);
+    }
+
+    /* Upload panel */
+
+    .upload-shell {
+      margin-bottom: 18px;
+    }
+
+    .upload-dropzone {
+      position: relative;
+      border-radius: 18px;
+      border: 1px dashed rgba(148, 163, 184, 0.85);
+      background: radial-gradient(circle at top left, rgba(191, 219, 254, 0.5), rgba(15, 23, 42, 0.02));
+      padding: 40px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       text-align: center;
-      color: var(--accent);
       cursor: pointer;
-      transition: 0.25s;
-      background: rgba(13, 110, 253, 0.03);
+      transition: border-color 0.15s ease-out, background 0.15s ease-out, transform 0.1s ease-out;
     }
 
-    .drop-zone:hover {
-      background: rgba(13,110,253,0.08);
+    html[data-theme="dark"] .upload-dropzone {
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.23), rgba(15, 23, 42, 0.95));
+      border-color: rgba(148, 163, 184, 0.8);
     }
 
-    .drop-zone-icon {
-      font-size: 28px;
-      margin-bottom: 10px;
+    .upload-dropzone.dragover {
+      border-color: #2563eb;
+      background: rgba(37, 99, 235, 0.08);
+      transform: translateY(-1px);
     }
 
-    .drop-zone-text-main {
+    .upload-icon {
+      font-size: 2.1rem;
+      margin-bottom: 8px;
+    }
+
+    .upload-title {
+      font-size: 0.95rem;
       font-weight: 500;
     }
 
-    .drop-zone-text-sub {
-      font-size: 13px;
-      opacity: 0.7;
+    .upload-hint {
+      font-size: 0.8rem;
+      color: var(--text-muted-light);
     }
 
-    /* Tables */
-    table.table tbody tr:hover {
-      background-color: rgba(13, 110, 253, 0.06);
-      cursor: pointer;
+    html[data-theme="dark"] .upload-hint {
+      color: var(--text-muted-dark);
     }
 
-    /* Heatmap grid */
+    .primary-btn {
+      background: #2563eb;
+      border-radius: 999px;
+      border: none;
+      padding: 7px 18px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #f9fafb;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+    }
+
+    .primary-btn:hover {
+      background: #1d4ed8;
+    }
+
+    /* Results table */
+
+    #results-table table {
+      width: 100%;
+      margin-bottom: 0;
+      border-collapse: collapse;
+    }
+
+    #results-table thead tr {
+      background: var(--table-header-light);
+    }
+
+    html[data-theme="dark"] #results-table thead tr {
+      background: var(--table-header-dark);
+    }
+
+    #results-table tbody tr:hover {
+      background: rgba(148, 163, 184, 0.1);
+    }
+
+    #results-table th,
+    #results-table td {
+      font-size: 0.83rem;
+      white-space: nowrap;
+    }
+
+    /* Heatmap */
+
     .heatmap-grid {
       display: grid;
-      grid-template-columns: repeat(13, minmax(24px, 1fr)); /* 1 label + 12 wells */
+      grid-template-columns: 38px repeat(12, minmax(0, 1fr));
+      grid-auto-rows: 34px;
       gap: 4px;
-      font-size: 11px;
+      font-size: 0.78rem;
+      margin-top: 12px;
+    }
+
+    .heatmap-header {
+      display: flex;
       align-items: center;
+      justify-content: center;
+      font-weight: 500;
+      color: var(--text-muted-light);
+    }
+
+    html[data-theme="dark"] .heatmap-header {
+      color: var(--text-muted-dark);
+    }
+
+    .heatmap-row-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 500;
+      color: var(--text-muted-light);
+    }
+
+    html[data-theme="dark"] .heatmap-row-label {
+      color: var(--text-muted-dark);
     }
 
     .heatmap-cell {
-      text-align: center;
-      padding: 4px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-      min-height: 24px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--text-main-light);
+      transition: transform 0.08s ease-out, box-shadow 0.08s ease-out, background 0.1s ease-out;
     }
 
-    .heatmap-label {
-      border: none;
-      font-weight: 600;
-      opacity: 0.7;
-      background: transparent !important;
+    html[data-theme="dark"] .heatmap-cell {
+      color: var(--text-main-dark);
+      background: rgba(30, 64, 175, 0.2);
+    }
+
+    .heatmap-cell.filled:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
     }
 
     .heatmap-legend {
-      font-size: 11px;
-      opacity: 0.75;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.78rem;
+      margin-top: 10px;
+      color: var(--text-muted-light);
     }
 
-    /* Loading overlay */
-    #loadingOverlay {
+    html[data-theme="dark"] .heatmap-legend {
+      color: var(--text-muted-dark);
+    }
+
+    .legend-swatch {
+      width: 26px;
+      height: 12px;
+      border-radius: 999px;
+    }
+
+    .legend-low {
+      background: var(--heat-low);
+    }
+
+    .legend-high {
+      background: var(--heat-high);
+    }
+
+    /* Spectral chart container height */
+    #spectral-chart-container {
+      height: 280px;
+    }
+
+    /* Loading overlay (shown when processing wells) */
+
+    #loading-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.55);
-      display: none;
-      justify-content: center;
+      background: rgba(15, 23, 42, 0.6);
+      display: flex;
       align-items: center;
-      z-index: 9999;
-      backdrop-filter: blur(5px);
+      justify-content: center;
+      z-index: 50;
+      backdrop-filter: blur(4px);
     }
 
-    .spinner-box {
-      text-align: center;
-      color: white;
+    #loading-overlay.hidden {
+      display: none;
     }
 
-    /* Spectral section placeholder */
-    .spectral-placeholder {
-      font-size: 13px;
-      opacity: 0.75;
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: rgba(148, 163, 184, 0.12);
+    .spinner {
+      width: 52px;
+      height: 52px;
+      border-radius: 999px;
+      border: 4px solid rgba(148, 163, 184, 0.35);
+      border-top-color: #2563eb;
+      animation: spin 0.9s linear infinite;
+      margin-bottom: 12px;
     }
 
-    /* Landing/About section */
-    .about-list {
-      font-size: 14px;
-      margin-bottom: 0;
-      padding-left: 18px;
-    }
-
-    /* Animations */
-    @keyframes fadeInUp {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
+    @keyframes spin {
       to {
-        opacity: 1;
-        transform: translateY(0);
+        transform: rotate(360deg);
       }
     }
 
-    /* Responsive */
-    @media (max-width: 900px) {
-      .layout {
-        flex-direction: column;
+    .spinner-text {
+      font-size: 0.9rem;
+      color: #e5e7eb;
+    }
+
+    /* Responsive tweaks */
+
+    @media (max-width: 960px) {
+      .app-shell {
+        grid-template-columns: 1fr;
       }
+
       .sidebar {
-        width: 100%;
+        position: relative;
         height: auto;
-        position: static;
         flex-direction: row;
         align-items: center;
-        gap: 10px;
+        padding: 16px;
+        gap: 16px;
       }
-      .sidebar-nav {
+
+      .sidebar-main-block {
+        flex: 1;
+      }
+
+      .nav-list {
         flex-direction: row;
         flex-wrap: wrap;
+        gap: 6px;
       }
-      .sidebar-footer {
-        display: none;
+
+      .nav-link {
+        padding-inline: 10px;
+      }
+
+      .main {
+        padding: 16px 16px 24px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .card-elevated {
+        padding: 16px 14px 14px;
+      }
+
+      .heatmap-grid {
+        font-size: 0.7rem;
+      }
+
+      #results-table th,
+      #results-table td {
+        font-size: 0.75rem;
       }
     }
   </style>
 </head>
 
-<body data-theme="light">
-
-<!-- Loading Overlay -->
-<div id="loadingOverlay">
-  <div class="spinner-box">
-    <div class="spinner-border text-light" style="width: 3.2rem; height: 3.2rem;"></div>
-    <p class="mt-3 fs-5">Processing wells…</p>
+<body>
+  <!-- LOADING OVERLAY (appears when running pipeline) -->
+  <div id="loading-overlay" class="hidden">
+    <div class="text-center">
+      <div class="spinner"></div>
+      <div class="spinner-text">Processing wells…</div>
+    </div>
   </div>
-</div>
 
-<div class="layout">
-
-  <!-- SIDEBAR -->
-  <aside class="sidebar">
-    <div class="brand">
-      <!-- Put your logo at static/logo.png -->
-      <img src="/static/logo.png" alt="Logo" class="brand-logo">
-      <div>
-        <div class="brand-title">Color Pipeline</div>
-        <div style="font-size: 11px; opacity: 0.6;">Spectral → Color → ΔE</div>
-      </div>
-    </div>
-
-    <div>
-      <div class="nav-section-title">Navigation</div>
-      <ul class="sidebar-nav">
-        <li><a href="#section-dashboard"><i class="fa-solid fa-gauge"></i><span>Dashboard</span></a></li>
-        <li><a href="#section-heatmap"><i class="fa-solid fa-table-cells-large"></i><span>ΔE Heatmap</span></a></li>
-        <li><a href="#section-spectra"><i class="fa-solid fa-wave-square"></i><span>Spectral Curves</span></a></li>
-        <li><a href="#section-about"><i class="fa-solid fa-circle-info"></i><span>About</span></a></li>
-      </ul>
-    </div>
-
-    <div class="sidebar-footer">
-      © 2025 Color Pipeline<br>
-      Built for spectroscopy workflows.
-    </div>
-  </aside>
-
-  <!-- MAIN CONTENT -->
-  <main class="content">
-
-    <!-- Top controls -->
-    <div class="top-controls">
-      <button class="btn-icon" id="darkToggle">
-        <i class="fa-solid fa-circle-half-stroke"></i>
-        Theme
-      </button>
-    </div>
-
-    <!-- HERO / LANDING -->
-    <section id="section-dashboard" class="hero">
-      <h1 class="hero-title">Spectral → Color → ΔE Analyzer</h1>
-      <p class="hero-subtitle">
-        Upload a 96-well spectrometer dataset (.xlsx). The system computes CIE XYZ, CIE Lab, and ΔE values,
-        providing a reproducible numeric signature for each well.
-      </p>
-    </section>
-
-    <!-- UPLOAD + RESULTS CARD -->
-    <section class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">Upload Dataset</div>
-          <div class="card-subtitle">Supports 96-well plate spreadsheet exports (.xlsx) with absorbance spectra.</div>
-        </div>
-      </div>
-
-      <!-- Upload Form with Drag-and-Drop -->
-      <form method="post" enctype="multipart/form-data" id="mainForm">
-        <div id="dropZone" class="drop-zone mb-3">
-          <div class="drop-zone-icon">
-            <i class="fa-solid fa-cloud-arrow-up"></i>
+  <div class="app-shell">
+    <!-- ========== SIDEBAR ========== -->
+    <aside class="sidebar">
+      <div class="sidebar-main-block w-100">
+        <div class="brand mb-3">
+          <div class="brand-logo">
+            <!-- If logo.png exists, it will show; otherwise gradient square is the logo -->
+            <img src="/static/img/logo.png" alt="Lab logo" onerror="this.style.display='none'">
           </div>
-          <div class="drop-zone-text-main">Drag & Drop Excel File Here</div>
-          <div class="drop-zone-text-sub">or click to browse (.xlsx)</div>
-          <input type="file" name="dataset" id="dataset" accept=".xlsx" hidden required>
+          <div>
+            <div class="brand-title">Color Pipeline</div>
+            <div class="brand-subtitle">Spectral → Color → ΔE</div>
+          </div>
         </div>
 
-        <button type="submit" class="btn btn-primary">
-          Run Pipeline
+        <div class="mb-2 sidebar-section-label">Navigation</div>
+        <ul class="nav-list">
+          <li>
+            <button class="nav-link active" data-page="dashboard" type="button">
+              <span class="icon">📊</span>
+              <span>Dashboard</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link" data-page="heatmap" type="button">
+              <span class="icon">🟩</span>
+              <span>ΔE Heatmap</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link" data-page="spectral" type="button">
+              <span class="icon">📈</span>
+              <span>Spectral Curves</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link" data-page="about" type="button">
+              <span class="icon">❓</span>
+              <span>Help &amp; About</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+
+      <div class="sidebar-footer">
+        <div>ΔE &gt; 2.0 ≈ visible difference</div>
+        <button id="theme-toggle" class="theme-toggle" type="button">
+          <div class="theme-toggle-thumb">☀️</div>
+          <span class="theme-toggle-label">Light mode</span>
         </button>
-      </form>
-
-      {% if error %}
-        <div class="alert alert-danger mt-3">{{ error }}</div>
-      {% endif %}
-    </section>
-
-    {% if table_html %}
-
-    <!-- PLATE SUMMARY + REFERENCE + DOWNLOADS -->
-    <section class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">Plate Summary</div>
-          <div class="card-subtitle">Detected wells, missing wells, and ΔE reference selection.</div>
-        </div>
       </div>
+    </aside>
 
-      {% if detected_wells %}
-        <p><strong>Detected wells:</strong> {{ detected_wells | join(", ") }}</p>
-      {% endif %}
-
-      {% if missing_wells %}
-        <p><strong>Missing wells:</strong> {{ missing_wells | join(", ") }}</p>
-      {% endif %}
-
-      {% if detected_wells and reference_well and file_path %}
-        <form action="/recalculate" method="post" class="row g-2 align-items-center mb-3">
-          <div class="col-auto"><strong>Reference well:</strong></div>
-          <div class="col-auto">
-            <select name="reference_well" class="form-select form-select-sm">
-              {% for w in detected_wells %}
-                <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>
-                  {{ w }}
-                </option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-auto">
-            <input type="hidden" name="file_path" value="{{ file_path }}">
-            <button class="btn btn-secondary btn-sm">Recalculate</button>
-          </div>
-        </form>
-      {% endif %}
-
-      <div class="d-flex flex-wrap gap-2">
-        <form action="/download_csv" method="post">
-          <input type="hidden" name="data" value="{{ table_html }}">
-          <button type="submit" class="btn btn-success btn-sm">
-            <i class="fa-solid fa-file-csv me-1"></i> Download CSV
-          </button>
-        </form>
-
-        <form action="/download_pdf" method="post">
-          <input type="hidden" name="data" value="{{ table_html }}">
-          <button type="submit" class="btn btn-danger btn-sm">
-            <i class="fa-solid fa-file-pdf me-1"></i> Download PDF
-          </button>
-        </form>
-      </div>
-    </section>
-
-    <!-- ΔE HEATMAP -->
-    <section id="section-heatmap" class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">ΔE Heatmap (Plate Layout)</div>
-          <div class="card-subtitle">
-            Visualizes ΔE values (relative to reference well) across the 8×12 plate.
+    <!-- ========== MAIN AREA ========== -->
+    <main class="main">
+      <header class="hero">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <h1 class="hero-title">Spectral → Color → ΔE Analyzer</h1>
+            <p class="hero-subtitle">
+              Upload a 96-well spectrometer dataset (<code>.xlsx</code>).
+              The system computes CIE XYZ, CIE Lab, and ΔE values, providing a reproducible
+              numeric color signature for each well.
+            </p>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div id="heatmapContainer" class="mb-2"></div>
-      <div class="heatmap-legend">
-        <span style="display:inline-block;width:14px;height:8px;background:#e0f2ff;border-radius:2px;border:1px solid var(--border);margin-right:4px;"></span>
-        Low ΔE (close to reference) &nbsp;&nbsp;
-        <span style="display:inline-block;width:14px;height:8px;background:#ff1744;border-radius:2px;border:1px solid var(--border);margin-right:4px;"></span>
-        High ΔE (far from reference)
-      </div>
-    </section>
+      <!-- ========== DASHBOARD PAGE ========== -->
+      <section id="page-dashboard" class="page-section active">
+        <div class="card-elevated mb-3 upload-shell">
+          <div class="card-header-row">
+            <div>
+              <div class="card-title">Upload Dataset</div>
+              <div class="card-subtitle">
+                Supports 96-well plate spreadsheet exports (<code>.xlsx</code>) with absorbance spectra.
+              </div>
+            </div>
+          </div>
 
-    <!-- SPECTRAL CURVES SECTION (UI STUB) -->
-    <section id="section-spectra" class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">Spectral Curves (Per Well)</div>
-          <div class="card-subtitle">
-            UI scaffold for plotting absorbance spectra wells — backend can later expose per-well spectral data as JSON.
+          <!-- Upload form -->
+          <form id="upload-form" method="post" enctype="multipart/form-data">
+            <div
+              id="upload-dropzone"
+              class="upload-dropzone mb-3"
+            >
+              <div>
+                <div class="upload-icon">☁️</div>
+                <div class="upload-title">Drag &amp; drop Excel file here</div>
+                <div class="upload-hint">or click to browse (<code>.xlsx</code>)</div>
+              </div>
+            </div>
+
+            <input
+              type="file"
+              id="dataset"
+              name="dataset"
+              accept=".xlsx"
+              class="form-control d-none"
+              required
+            >
+
+            <div class="d-flex flex-wrap gap-2">
+              <button type="submit" class="primary-btn">
+                Run Pipeline
+              </button>
+
+              {% if detected_wells %}
+              <div class="align-self-center small text-muted ms-1">
+                Last run: {{ detected_wells|length }} wells detected.
+              </div>
+              {% endif %}
+            </div>
+          </form>
+
+          {% if error %}
+          <div class="alert alert-danger mt-3 mb-0">{{ error }}</div>
+          {% endif %}
+        </div>
+
+        {% if table_html %}
+        <!-- Summary + reference controls -->
+        <div class="row g-3 mb-3">
+          <div class="col-lg-6">
+            <div class="card-elevated h-100">
+              <div class="card-header-row">
+                <div>
+                  <div class="card-title">Plate Overview</div>
+                  <div class="card-subtitle">Detected vs. missing wells</div>
+                </div>
+              </div>
+
+              {% if detected_wells %}
+              <p class="mb-1 small">
+                <strong>Detected wells:</strong>
+                {{ detected_wells | join(", ") }}
+              </p>
+              {% endif %}
+
+              {% if missing_wells %}
+              <p class="mb-0 small">
+                <strong>Missing wells:</strong>
+                {{ missing_wells | join(", ") }}
+              </p>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="col-lg-6">
+            <div class="card-elevated h-100">
+              <div class="card-header-row">
+                <div>
+                  <div class="card-title">Reference &amp; Export</div>
+                  <div class="card-subtitle">
+                    ΔE is calculated relative to the selected reference well.
+                  </div>
+                </div>
+              </div>
+
+              {% if detected_wells and reference_well and file_path %}
+              <form action="/recalculate" method="post" class="mb-2">
+                <div class="row g-2 align-items-center">
+                  <div class="col-auto">
+                    <label for="reference_well" class="col-form-label small">
+                      <strong>Reference well:</strong>
+                    </label>
+                  </div>
+                  <div class="col-auto">
+                    <select
+                      name="reference_well"
+                      id="reference_well"
+                      class="form-select form-select-sm"
+                    >
+                      {% for w in detected_wells %}
+                      <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>
+                        {{ w }}
+                      </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-auto">
+                    <input type="hidden" name="file_path" value="{{ file_path }}">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm">
+                      Recalculate
+                    </button>
+                  </div>
+                </div>
+              </form>
+              {% endif %}
+
+              <div class="d-flex flex-wrap gap-2 mt-2">
+                <form action="/download_csv" method="post">
+                  <input type="hidden" name="data" value="{{ table_html }}">
+                  <button type="submit" class="btn btn-success btn-sm">
+                    Download CSV
+                  </button>
+                </form>
+                <form action="/download_pdf" method="post">
+                  <input type="hidden" name="data" value="{{ table_html }}">
+                  <button type="submit" class="btn btn-danger btn-sm">
+                    Download PDF
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="row g-2 align-items-center mb-3">
-        <div class="col-auto"><strong>Select well:</strong></div>
-        <div class="col-auto">
-          <select id="spectralWellSelect" class="form-select form-select-sm">
-            {% for w in detected_wells %}
-              <option value="{{ w }}">{{ w }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-auto">
-          <button id="btnShowSpectrum" class="btn btn-outline-primary btn-sm">
-            Show Spectral Curve
-          </button>
-        </div>
-      </div>
+        <!-- Results table -->
+        <div class="card-elevated">
+          <div class="card-header-row">
+            <div>
+              <div class="card-title">Results Table</div>
+              <div class="card-subtitle">
+                XYZ, Lab, and ΔE values per well. ΔE is relative to the selected reference well.
+              </div>
+            </div>
+          </div>
 
-      <div id="spectralPlaceholder" class="spectral-placeholder">
-        Spectral plotting requires access to full absorbance vs wavelength data from the backend.
-        This UI is ready: you can later expose a JSON endpoint (e.g., `/spectra?well=A1`) and drive a chart library here.
-      </div>
-    </section>
-
-    <!-- RESULTS TABLE -->
-    <section class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">Results Table</div>
-          <div class="card-subtitle">
-            XYZ, Lab, and ΔE values per well. ΔE is relative to the selected reference well.
+          <div id="results-table" class="table-responsive">
+            {{ table_html | safe }}
           </div>
         </div>
-      </div>
+        {% endif %}
+      </section>
 
-      <div class="table-responsive">
-        {{ table_html | safe }}
-      </div>
-    </section>
+      <!-- ========== HEATMAP PAGE ========== -->
+      <section id="page-heatmap" class="page-section">
+        <div class="card-elevated">
+          <div class="card-header-row">
+            <div>
+              <div class="card-title">ΔE Heatmap (Plate Layout)</div>
+              <div class="card-subtitle">
+                Visualizes ΔE values across the 8×12 plate. Colors adapt to the current theme.
+              </div>
+            </div>
+          </div>
 
-    {% endif %}
+          <div id="heatmap-grid" class="heatmap-grid"></div>
 
-    <!-- ABOUT / LANDING SECTION -->
-    <section id="section-about" class="glass-card">
-      <div class="card-header-line">
-        <div>
-          <div class="card-title">About This Tool</div>
-          <div class="card-subtitle">Built for high-precision spectral color characterization.</div>
+          <div class="heatmap-legend">
+            <div class="legend-swatch legend-low"></div>
+            <span>Low ΔE (close to reference)</span>
+            <div class="legend-swatch legend-high ms-3"></div>
+            <span>High ΔE (far from reference)</span>
+          </div>
+
+          {% if not table_html %}
+          <p class="mt-3 small text-muted mb-0">
+            Upload a dataset on the Dashboard to populate the heatmap.
+          </p>
+          {% endif %}
         </div>
-      </div>
+      </section>
 
-      <p style="font-size:14px;">
-        This web application converts full absorbance spectra into CIE XYZ, CIE Lab, and ΔE values using a standardized
-        pipeline under illuminant D65. It is designed for workflows such as 96-well plate spectroscopy where subtle
-        wavelength shifts and color changes need to be tracked numerically.
-      </p>
+      <!-- ========== SPECTRAL CURVES PAGE ========== -->
+      <section id="page-spectral" class="page-section">
+        <div class="card-elevated mb-3">
+          <div class="card-header-row">
+            <div>
+              <div class="card-title">Spectral Curves</div>
+              <div class="card-subtitle">
+                Plot absorbance vs wavelength for any well. If no dataset is uploaded,
+                an example curve is shown so you can see what real spectra will look like.
+              </div>
+            </div>
+          </div>
 
-      <ul class="about-list">
-        <li>Upload plate datasets directly from your spectrometer export (.xlsx).</li>
-        <li>Automatically detect wells and highlight missing or incomplete data.</li>
-        <li>Compute CIE XYZ → CIE Lab → ΔE per well relative to a chosen reference.</li>
-        <li>Export results as CSV for analysis or PDF for reporting.</li>
-      </ul>
-    </section>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small"><strong>Select well</strong></label>
+              <select id="spectral-well-select" class="form-select form-select-sm">
+                {% if detected_wells %}
+                  {% for w in detected_wells %}
+                  <option value="{{ w }}">{{ w }}</option>
+                  {% endfor %}
+                {% else %}
+                  <!-- If no wells yet, still show something selectable for the example -->
+                  <option value="A10">A10</option>
+                {% endif %}
+              </select>
 
-  </main>
-</div>
+              <!-- Hidden input holding current uploaded file path (used by JS to call /spectra) -->
+              <input type="hidden" id="currentFilePath" value="{{ file_path or '' }}">
 
-<!-- Scripts -->
-<script>
-  // Dark mode toggle
-  document.getElementById('darkToggle').onclick = () => {
-    const current = document.body.getAttribute('data-theme');
-    document.body.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
-  };
+              <!-- Status text under the selector (JS updates this when real data is loaded) -->
+              <p id="spectral-status" class="mt-2 small text-muted mb-0">
+                {% if file_path %}
+                  Real absorbance vs wavelength spectra will be plotted from the uploaded dataset.
+                {% else %}
+                  Showing example spectral curve.<br>Upload a dataset to see real spectra.
+                {% endif %}
+              </p>
+            </div>
 
-  // Drag-and-drop upload
-  const dropZone = document.getElementById('dropZone');
-  const inputFile = document.getElementById('dataset');
+            <div class="col-md-8">
+              <div id="spectral-chart-container">
+                <canvas id="spectral-chart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-  dropZone.onclick = () => inputFile.click();
-  dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.style.background = "rgba(13,110,253,0.10)";
-  });
-  dropZone.addEventListener('dragleave', e => {
-    dropZone.style.background = "rgba(13,110,253,0.03)";
-  });
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    inputFile.files = e.dataTransfer.files;
-    dropZone.style.background = "rgba(13,110,253,0.03)";
-  });
+      <!-- ========== ABOUT / HELP PAGE ========== -->
+      <section id="page-about" class="page-section">
+        <div class="card-elevated">
+          <div class="card-header-row">
+            <div>
+              <div class="card-title">About this tool</div>
+              <div class="card-subtitle">
+                Quick guide for scientists and engineers using the spectral color pipeline.
+              </div>
+            </div>
+          </div>
 
-  // Show loading overlay on upload submit
-  const mainForm = document.getElementById('mainForm');
-  if (mainForm) {
-    mainForm.onsubmit = () => {
-      document.getElementById('loadingOverlay').style.display = 'flex';
-    };
-  }
+          <div class="small">
+            <p>
+              This web app converts full absorbance spectra into standardized color coordinates
+              using CIE 1931 colorimetry. For each well we compute:
+            </p>
+            <ul>
+              <li><strong>XYZ</strong> – Tristimulus values under CIE D65 illuminant</li>
+              <li><strong>L*, a*, b*</strong> – CIE Lab coordinates (perceptually uniform space)</li>
+              <li><strong>ΔE</strong> – Color difference between each well and a chosen reference well</li>
+            </ul>
+            <p>
+              The pipeline is implemented in Python using
+              <code>colour-science</code>, <code>pandas</code>, and <code>numpy</code>, wrapped in a Flask app.
+              This UI layer is designed so you can drop in new plate exports and immediately obtain
+              reproducible numeric “color signatures” suitable for automation and screening.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
-  // Spectral button stub
-  const spectralBtn = document.getElementById('btnShowSpectrum');
-  if (spectralBtn) {
-    spectralBtn.addEventListener('click', function(e) {
-      e.preventDefault();
-      alert("Spectral plotting UI is ready. To enable real plots, add a backend endpoint that returns wavelength/absorbance arrays for the selected well.");
-    });
-  }
+  <script>
+    (function () {
+      const htmlEl = document.documentElement;
 
-  // ΔE heatmap builder (from table_html)
-  function buildHeatmapFromTable() {
-    const heatmapContainer = document.getElementById('heatmapContainer');
-    if (!heatmapContainer) return;
+      /* ======================================================
+       * THEME TOGGLE (LIGHT ↔ DARK)
+       * ------------------------------------------------------
+       * If you want to add more themes later, this is the
+       * logic to look at. It reads/writes data-theme on <html>.
+       * ==================================================== */
+      const themeToggleBtn = document.getElementById('theme-toggle');
+      const themeThumb = themeToggleBtn.querySelector('.theme-toggle-thumb');
+      const themeLabel = themeToggleBtn.querySelector('.theme-toggle-label');
 
-    const table = document.querySelector('table');
-    if (!table) {
-      heatmapContainer.innerHTML = "<small>No result table found.</small>";
-      return;
-    }
+      function applyTheme(theme) {
+        htmlEl.setAttribute('data-theme', theme);
+        localStorage.setItem('colour-pipeline-theme', theme);
 
-    // Find header indices
-    const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
-    if (!headerRow) return;
-
-    const headers = Array.from(headerRow.children).map(th => th.innerText.trim());
-    const wellIndex = headers.indexOf('Well');
-    const deltaIndex = headers.findIndex(h => h.startsWith('DeltaE_vs_'));
-
-    if (wellIndex === -1 || deltaIndex === -1) {
-      heatmapContainer.innerHTML = "<small>Could not locate Well/ΔE column.</small>";
-      return;
-    }
-
-    // Collect well → ΔE map
-    const rows = Array.from(table.querySelectorAll('tbody tr'));
-    const wellToDelta = {};
-    let maxDelta = 0;
-
-    rows.forEach(tr => {
-      const cells = Array.from(tr.children);
-      const well = cells[wellIndex]?.innerText.trim();
-      const deltaStr = cells[deltaIndex]?.innerText.trim();
-      const d = parseFloat(deltaStr);
-      if (well && !isNaN(d)) {
-        wellToDelta[well] = d;
-        if (d > maxDelta) maxDelta = d;
-      }
-    });
-
-    // Build 8x12 grid (A–H, 1–12)
-    const plateRows = "ABCDEFGH".split("");
-    const plateCols = Array.from({length: 12}, (_, i) => i + 1);
-
-    const grid = document.createElement('div');
-    grid.className = "heatmap-grid";
-
-    // Top-left empty label
-    const corner = document.createElement('div');
-    corner.className = "heatmap-cell heatmap-label";
-    grid.appendChild(corner);
-
-    // Column labels
-    plateCols.forEach(col => {
-      const label = document.createElement('div');
-      label.className = "heatmap-cell heatmap-label";
-      label.textContent = col;
-      grid.appendChild(label);
-    });
-
-    // Data rows
-    plateRows.forEach(rowLetter => {
-      // Row label
-      const rowLabel = document.createElement('div');
-      rowLabel.className = "heatmap-cell heatmap-label";
-      rowLabel.textContent = rowLetter;
-      grid.appendChild(rowLabel);
-
-      // 12 wells
-      plateCols.forEach(col => {
-        const wellName = rowLetter + col;
-        const cell = document.createElement('div');
-        cell.className = "heatmap-cell";
-        const d = wellToDelta[wellName];
-
-        if (d != null && maxDelta > 0) {
-          const t = Math.min(d / maxDelta, 1.0); // 0..1
-          // Interpolate from light blue to red
-          const r = Math.round(224 + (255 - 224) * t);
-          const g = Math.round(242 - 242 * t);
-          const b = Math.round(255 - 211 * t);
-          cell.style.backgroundColor = `rgb(${r},${g},${b})`;
-          cell.textContent = Math.round(d * 10) / 10;
+        if (theme === 'dark') {
+          themeThumb.textContent = '🌙';
+          themeLabel.textContent = 'Dark mode';
         } else {
-          cell.style.backgroundColor = "transparent";
-          cell.style.opacity = 0.4;
-          cell.textContent = "";
+          themeThumb.textContent = '☀️';
+          themeLabel.textContent = 'Light mode';
         }
 
-        grid.appendChild(cell);
+        // re-color heatmap when theme changes
+        colorHeatmapCells();
+        // restyle spectral chart if present
+        updateChartTheme(theme);
+      }
+
+      // Load stored theme or default to light
+      const storedTheme = localStorage.getItem('colour-pipeline-theme');
+      if (storedTheme === 'dark' || storedTheme === 'light') {
+        applyTheme(storedTheme);
+      } else {
+        applyTheme('light');
+      }
+
+      themeToggleBtn.addEventListener('click', () => {
+        const current = htmlEl.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        applyTheme(current);
       });
-    });
 
-    heatmapContainer.innerHTML = "";
-    heatmapContainer.appendChild(grid);
-  }
+      /* -------------------------------
+       * NAV PAGES (switch between tabs)
+       * ---------------------------- */
+      const navLinks = document.querySelectorAll('.nav-link');
+      const pages = {
+        dashboard: document.getElementById('page-dashboard'),
+        heatmap: document.getElementById('page-heatmap'),
+        spectral: document.getElementById('page-spectral'),
+        about: document.getElementById('page-about')
+      };
 
-  document.addEventListener('DOMContentLoaded', buildHeatmapFromTable);
-</script>
+      navLinks.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const target = btn.getAttribute('data-page');
+          Object.entries(pages).forEach(([key, section]) => {
+            if (section) {
+              section.classList.toggle('active', key === target);
+            }
+          });
+          navLinks.forEach(b => b.classList.toggle('active', b === btn));
+        });
+      });
 
-</body>
-</html>
+      /* -------------------------------
+       * UPLOAD: drag & drop + spinner
+       * ---------------------------- */
+      const uploadForm = document.getElementById('upload-form');
+      const dropzone = document.getElementById('upload-dropzone');
+      const fileInput = document.getElementById('dataset');
+      const loadingOverlay = document.getElementById('loading-overlay');
+
+      if (dropzone && fileInput) {
+        dropzone.addEventListener('click', () => fileInput.click());
+
+        dropzone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        });
+
+        ['dragleave', 'dragend', 'drop'].forEach(evt => {
+          dropzone.addEventListener(evt, (e) => {
+            if (evt !== 'drop') e.preventDefault();
+            dropzone.classList.remove('dragover');
+          });
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const files = e.dataTransfer.files;
+          if (files && files.length > 0) {
+            fileInput.files = files;
+          }
+        });
+      }
+
+      if (uploadForm) {
+        uploadForm.addEventListener('submit', () => {
+          if (loadingOverlay) {
+            loadingOverlay.classList.remove('hidden');
+          }
+        });
+      }
+
+      /* -------------------------------
+       * RESULTS TABLE → WELL ΔE MAP
+       * ---------------------------- */
+      const resultsWrapper = document.getElementById('results-table');
+      let wellDeltaMap = null;
+
+      function parseResultsTable() {
+        wellDeltaMap = {};
+        if (!resultsWrapper) return;
+
+        const table = resultsWrapper.querySelector('table');
+        if (!table) return;
+
+        table.classList.add('table', 'table-hover', 'align-middle');
+
+        const thead = table.querySelector('thead');
+        const tbody = table.querySelector('tbody');
+        if (!thead || !tbody) return;
+
+        // find column indices
+        const headerCells = Array.from(thead.querySelectorAll('th'));
+        let wellIdx = -1;
+        let deltaIdx = -1;
+
+        headerCells.forEach((th, idx) => {
+          const txt = th.textContent.trim();
+          if (txt.toLowerCase() === 'well') wellIdx = idx;
+          if (txt.toLowerCase().startsWith('deltae_vs_')) deltaIdx = idx;
+        });
+
+        if (wellIdx === -1 || deltaIdx === -1) return;
+
+        Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
+          const cells = tr.querySelectorAll('td');
+          if (cells.length === 0) return;
+          const well = cells[wellIdx].textContent.trim();
+          const delta = parseFloat(cells[deltaIdx].textContent.trim());
+          if (!well || isNaN(delta)) return;
+          wellDeltaMap[well] = delta;
+        });
+      }
+
+      parseResultsTable();
+
+      /* -------------------------------
+       * HEATMAP FROM RESULTS TABLE
+       * ---------------------------- */
+      const heatmapGrid = document.getElementById('heatmap-grid');
+
+      function buildHeatmap() {
+        if (!heatmapGrid) return;
+        heatmapGrid.innerHTML = '';
+
+        const rows = ['A','B','C','D','E','F','G','H'];
+        const cols = [1,2,3,4,5,6,7,8,9,10,11,12];
+
+        // header corner
+        const corner = document.createElement('div');
+        corner.className = 'heatmap-header';
+        heatmapGrid.appendChild(corner);
+
+        // column headers
+        cols.forEach(c => {
+          const h = document.createElement('div');
+          h.className = 'heatmap-header';
+          h.textContent = c;
+          heatmapGrid.appendChild(h);
+        });
+
+        // data rows
+        rows.forEach(r => {
+          // row label
+          const label = document.createElement('div');
+          label.className = 'heatmap-row-label';
+          label.textContent = r;
+          heatmapGrid.appendChild(label);
+
+          cols.forEach(c => {
+            const wellId = `${r}${c}`;
+            const delta = wellDeltaMap && Object.prototype.hasOwnProperty.call(wellDeltaMap, wellId)
+              ? wellDeltaMap[wellId]
+              : null;
+
+            const cell = document.createElement('div');
+            cell.className = 'heatmap-cell';
+            cell.dataset.well = wellId;
+
+            if (delta != null) {
+              cell.classList.add('filled');
+              cell.dataset.delta = delta.toString();
+              cell.textContent = delta.toFixed(1);
+            } else {
+              cell.textContent = '–';
+              cell.dataset.delta = '';
+            }
+
+            heatmapGrid.appendChild(cell);
+          });
+        });
+
+        colorHeatmapCells();
+      }
+
+      function colorHeatmapCells() {
+        if (!heatmapGrid) return;
+        const theme = htmlEl.getAttribute('data-theme') || 'light';
+        const cells = Array.from(heatmapGrid.querySelectorAll('.heatmap-cell.filled'));
+        if (cells.length === 0) return;
+
+        let min = Infinity;
+        let max = -Infinity;
+        cells.forEach(cell => {
+          const d = parseFloat(cell.dataset.delta);
+          if (!isNaN(d)) {
+            min = Math.min(min, d);
+            max = Math.max(max, d);
+          }
+        });
+        if (!isFinite(min) || !isFinite(max)) return;
+        if (max === min) max = min + 1e-6;
+
+        cells.forEach(cell => {
+          const val = parseFloat(cell.dataset.delta);
+          if (isNaN(val)) return;
+          const t = (val - min) / (max - min); // 0..1
+          // heat from blue (low) to red (high)
+          const hue = 220 - 220 * t;
+          const saturation = theme === 'dark' ? 80 : 90;
+          const lightness = theme === 'dark'
+            ? 30 + 25 * (1 - Math.abs(t - 0.5))
+            : 88 - 30 * (1 - Math.abs(t - 0.5));
+
+          const bg = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+          cell.style.background = bg;
+
+          // choose text color based on lightness
+          const textColor = lightness < (theme === 'dark' ? 55 : 65) ? '#f9fafb' : '#111827';
+          cell.style.color = textColor;
+        });
+      }
+
+      if (wellDeltaMap && Object.keys(wellDeltaMap).length > 0) {
+        buildHeatmap();
+      }
+
+      /* =====================================================
+       * SPECTRAL CHART (REAL DATA + EXAMPLE WHEN NO FILE)
+       * -----------------------------------------------------
+       * - If an Excel file has been uploaded:
+       *     → Fetch real spectra from /spectra?well=...&file=...
+       * - If no file:
+       *     → Show a synthetic example curve and status text:
+       *       "Showing example spectral curve. Upload a dataset to see real spectra."
+       * =================================================== */
+
+      let spectralChart = null;
+      const spectralCanvas = document.getElementById('spectral-chart');
+      const spectralSelect = document.getElementById('spectral-well-select');
+      const spectralStatus = document.getElementById('spectral-status');
+      const filePathInput = document.getElementById('currentFilePath');
+
+      // Helper: draw spectrum using Chart.js from wavelength + value arrays
+      function renderSpectrumChart(wavelengths, values, wellLabel) {
+        if (!spectralCanvas) return;
+        const ctx = spectralCanvas.getContext('2d');
+        const theme = htmlEl.getAttribute('data-theme') || 'light';
+
+        const lineColor = theme === 'dark' ? '#60a5fa' : '#1d4ed8';
+        const gridColor = theme === 'dark' ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.5)';
+        const textColor = theme === 'dark' ? '#e5e7eb' : '#0f172a';
+
+        if (spectralChart) {
+          spectralChart.destroy();
+        }
+
+        spectralChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: wavelengths,
+            datasets: [{
+              label: `Spectrum (${wellLabel})`,
+              data: values,
+              borderColor: lineColor,
+              backgroundColor: 'transparent',
+              tension: 0.22,
+              borderWidth: 2,
+              pointRadius: 0
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: {
+                labels: { color: textColor, font: { size: 11 } }
+              },
+              tooltip: {
+                callbacks: {
+                  label: ctx => `Absorbance: ${ctx.parsed.y.toFixed(4)}`
+                }
+              }
+            },
+            scales: {
+              x: {
+                title: { display: true, text: 'Wavelength (nm)', color: textColor },
+                ticks: { color: textColor },
+                grid: { color: gridColor }
+              },
+              y: {
+                title: { display: true, text: 'Absorbance', color: textColor },
+                ticks: { color: textColor },
+                grid: { color: gridColor }
+              }
+            }
+          }
+        });
+      }
+
+      // Example generator for the "no file yet" case
+      function generateExampleSpectrum() {
+        const wavelengths = [];
+        const values = [];
+        for (let lambda = 380; lambda <= 780; lambda += 5) {
+          const center = 520;
+          const sigma = 40;
+          const gauss = Math.exp(-0.5 * Math.pow((lambda - center) / sigma, 2));
+          const baseline = 0.1;
+          const v = baseline + gauss * 0.9;
+          wavelengths.push(lambda);
+          values.push(parseFloat(v.toFixed(3)));
+        }
+        return { wavelengths, values };
+      }
+
+      // Load spectrum for the currently selected well:
+      // - real data if filePath exists
+      // - example otherwise
+      async function loadSpectrumForSelectedWell() {
+        if (!spectralCanvas || !spectralSelect) return;
+
+        const wellId = spectralSelect.value || 'A10';
+        const hasFile = filePathInput && filePathInput.value;
+
+        // No file uploaded yet → show example spectru
