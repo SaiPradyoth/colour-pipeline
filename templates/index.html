@@ -1,44 +1,443 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Spectral Color Pipeline</title>
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  >
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spectral → Color → ΔE Analyzer</title>
+
+  <!-- Bootstrap -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Icons -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+
+  <!-- Fonts & Styles -->
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --card-bg: rgba(255, 255, 255, 0.9);
+      --text: #1a1a1a;
+      --accent: #0d6efd;
+      --border: #dde1eb;
+      --glass-border: rgba(255,255,255,0.6);
+      --sidebar-bg: #ffffff;
+    }
+
+    [data-theme="dark"] {
+      --bg: #050609;
+      --card-bg: rgba(18, 20, 26, 0.98);
+      --text: #e9edf7;
+      --accent: #4da3ff;
+      --border: #3a3f4f;
+      --glass-border: rgba(255,255,255,0.08);
+      --sidebar-bg: #10121a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #e3f2fd, var(--bg));
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+      color: var(--text);
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 8px 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      object-fit: contain;
+      background: #eef2ff;
+      padding: 4px;
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .nav-section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.6;
+      margin: 4px 0 2px;
+    }
+
+    .sidebar-nav {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .sidebar-nav li a {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 14px;
+      opacity: 0.85;
+      transition: background 0.2s ease, opacity 0.2s ease, transform 0.1s;
+    }
+
+    .sidebar-nav li a:hover {
+      background: rgba(13,110,253,0.08);
+      opacity: 1;
+      transform: translateX(2px);
+    }
+
+    .sidebar-nav li a i {
+      width: 18px;
+      text-align: center;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      font-size: 11px;
+      opacity: 0.6;
+    }
+
+    /* Top bar controls */
+    .top-controls {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .btn-icon {
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.9);
+      padding: 6px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    /* Main Content */
+    .content {
+      flex: 1;
+      padding: 20px 24px 32px;
+    }
+
+    .hero {
+      margin-bottom: 20px;
+      animation: fadeInUp 0.6s ease;
+    }
+
+    .hero-title {
+      font-weight: 700;
+      font-size: 30px;
+      margin-bottom: 4px;
+    }
+
+    .hero-subtitle {
+      font-size: 14px;
+      opacity: 0.7;
+    }
+
+    /* Glass cards */
+    .glass-card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 20px 22px;
+      border: 1px solid var(--glass-border);
+      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.1);
+      margin-bottom: 18px;
+      animation: fadeInUp 0.5s ease;
+    }
+
+    .card-header-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-weight: 600;
+      font-size: 18px;
+    }
+
+    .card-subtitle {
+      font-size: 13px;
+      opacity: 0.65;
+    }
+
+    /* Drag & drop upload */
+    .drop-zone {
+      border: 2px dashed var(--accent);
+      border-radius: 12px;
+      padding: 28px;
+      text-align: center;
+      color: var(--accent);
+      cursor: pointer;
+      transition: 0.25s;
+      background: rgba(13, 110, 253, 0.03);
+    }
+
+    .drop-zone:hover {
+      background: rgba(13,110,253,0.08);
+    }
+
+    .drop-zone-icon {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .drop-zone-text-main {
+      font-weight: 500;
+    }
+
+    .drop-zone-text-sub {
+      font-size: 13px;
+      opacity: 0.7;
+    }
+
+    /* Tables */
+    table.table tbody tr:hover {
+      background-color: rgba(13, 110, 253, 0.06);
+      cursor: pointer;
+    }
+
+    /* Heatmap grid */
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(13, minmax(24px, 1fr)); /* 1 label + 12 wells */
+      gap: 4px;
+      font-size: 11px;
+      align-items: center;
+    }
+
+    .heatmap-cell {
+      text-align: center;
+      padding: 4px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      min-height: 24px;
+    }
+
+    .heatmap-label {
+      border: none;
+      font-weight: 600;
+      opacity: 0.7;
+      background: transparent !important;
+    }
+
+    .heatmap-legend {
+      font-size: 11px;
+      opacity: 0.75;
+    }
+
+    /* Loading overlay */
+    #loadingOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      backdrop-filter: blur(5px);
+    }
+
+    .spinner-box {
+      text-align: center;
+      color: white;
+    }
+
+    /* Spectral section placeholder */
+    .spectral-placeholder {
+      font-size: 13px;
+      opacity: 0.75;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: rgba(148, 163, 184, 0.12);
+    }
+
+    /* Landing/About section */
+    .about-list {
+      font-size: 14px;
+      margin-bottom: 0;
+      padding-left: 18px;
+    }
+
+    /* Animations */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .layout {
+        flex-direction: column;
+      }
+      .sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+      }
+      .sidebar-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+      }
+      .sidebar-footer {
+        display: none;
+      }
+    }
+  </style>
 </head>
-<body class="p-4">
-  <div class="container">
-    <h1 class="mb-3">Spectral → Color → ΔE Analyzer</h1>
-    <p class="text-muted">
-      Upload a 96-well plate spectrometer dataset (.xlsx).
-      The system will compute CIE XYZ, CIE Lab, and ΔE values.
-    </p>
 
-    <!-- Upload Form -->
-    <form method="post" enctype="multipart/form-data" class="mb-4">
-      <div class="mb-3">
-        <label for="dataset" class="form-label">Excel File (.xlsx)</label>
-        <input type="file"
-               class="form-control"
-               id="dataset"
-               name="dataset"
-               accept=".xlsx"
-               required>
+<body data-theme="light">
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay">
+  <div class="spinner-box">
+    <div class="spinner-border text-light" style="width: 3.2rem; height: 3.2rem;"></div>
+    <p class="mt-3 fs-5">Processing wells…</p>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <!-- Put your logo at static/logo.png -->
+      <img src="/static/logo.png" alt="Logo" class="brand-logo">
+      <div>
+        <div class="brand-title">Color Pipeline</div>
+        <div style="font-size: 11px; opacity: 0.6;">Spectral → Color → ΔE</div>
       </div>
-      <button type="submit" class="btn btn-primary">
-        Run Pipeline
-      </button>
-    </form>
+    </div>
 
-    {% if error %}
-      <div class="alert alert-danger">{{ error }}</div>
-    {% endif %}
+    <div>
+      <div class="nav-section-title">Navigation</div>
+      <ul class="sidebar-nav">
+        <li><a href="#section-dashboard"><i class="fa-solid fa-gauge"></i><span>Dashboard</span></a></li>
+        <li><a href="#section-heatmap"><i class="fa-solid fa-table-cells-large"></i><span>ΔE Heatmap</span></a></li>
+        <li><a href="#section-spectra"><i class="fa-solid fa-wave-square"></i><span>Spectral Curves</span></a></li>
+        <li><a href="#section-about"><i class="fa-solid fa-circle-info"></i><span>About</span></a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-footer">
+      © 2025 Color Pipeline<br>
+      Built for spectroscopy workflows.
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="content">
+
+    <!-- Top controls -->
+    <div class="top-controls">
+      <button class="btn-icon" id="darkToggle">
+        <i class="fa-solid fa-circle-half-stroke"></i>
+        Theme
+      </button>
+    </div>
+
+    <!-- HERO / LANDING -->
+    <section id="section-dashboard" class="hero">
+      <h1 class="hero-title">Spectral → Color → ΔE Analyzer</h1>
+      <p class="hero-subtitle">
+        Upload a 96-well spectrometer dataset (.xlsx). The system computes CIE XYZ, CIE Lab, and ΔE values,
+        providing a reproducible numeric signature for each well.
+      </p>
+    </section>
+
+    <!-- UPLOAD + RESULTS CARD -->
+    <section class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">Upload Dataset</div>
+          <div class="card-subtitle">Supports 96-well plate spreadsheet exports (.xlsx) with absorbance spectra.</div>
+        </div>
+      </div>
+
+      <!-- Upload Form with Drag-and-Drop -->
+      <form method="post" enctype="multipart/form-data" id="mainForm">
+        <div id="dropZone" class="drop-zone mb-3">
+          <div class="drop-zone-icon">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+          </div>
+          <div class="drop-zone-text-main">Drag & Drop Excel File Here</div>
+          <div class="drop-zone-text-sub">or click to browse (.xlsx)</div>
+          <input type="file" name="dataset" id="dataset" accept=".xlsx" hidden required>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+          Run Pipeline
+        </button>
+      </form>
+
+      {% if error %}
+        <div class="alert alert-danger mt-3">{{ error }}</div>
+      {% endif %}
+    </section>
 
     {% if table_html %}
 
-      <!-- Detected + Missing wells -->
+    <!-- PLATE SUMMARY + REFERENCE + DOWNLOADS -->
+    <section class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">Plate Summary</div>
+          <div class="card-subtitle">Detected wells, missing wells, and ΔE reference selection.</div>
+        </div>
+      </div>
+
       {% if detected_wells %}
         <p><strong>Detected wells:</strong> {{ detected_wells | join(", ") }}</p>
       {% endif %}
@@ -47,58 +446,281 @@
         <p><strong>Missing wells:</strong> {{ missing_wells | join(", ") }}</p>
       {% endif %}
 
-      <!-- Reference well dropdown (Option D layout) -->
       {% if detected_wells and reference_well and file_path %}
-        <form action="/recalculate" method="post" class="mb-3">
-          <div class="row g-2 align-items-center">
-            <div class="col-auto">
-              <label for="reference_well" class="col-form-label">
-                <strong>Reference well:</strong>
-              </label>
-            </div>
-            <div class="col-auto">
-              <select
-                name="reference_well"
-                id="reference_well"
-                class="form-select form-select-sm"
-              >
-                {% for w in detected_wells %}
-                  <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>
-                    {{ w }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-auto">
-              <input type="hidden" name="file_path" value="{{ file_path }}">
-              <button type="submit" class="btn btn-secondary btn-sm">Recalculate</button>
-            </div>
+        <form action="/recalculate" method="post" class="row g-2 align-items-center mb-3">
+          <div class="col-auto"><strong>Reference well:</strong></div>
+          <div class="col-auto">
+            <select name="reference_well" class="form-select form-select-sm">
+              {% for w in detected_wells %}
+                <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>
+                  {{ w }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-auto">
+            <input type="hidden" name="file_path" value="{{ file_path }}">
+            <button class="btn btn-secondary btn-sm">Recalculate</button>
           </div>
         </form>
       {% endif %}
 
-      <!-- CSV Download -->
-      <form action="/download_csv" method="post" style="margin-bottom: 10px;">
-        <input type="hidden" name="data" value="{{ table_html }}">
-        <button type="submit" class="btn btn-success">Download CSV</button>
-      </form>
+      <div class="d-flex flex-wrap gap-2">
+        <form action="/download_csv" method="post">
+          <input type="hidden" name="data" value="{{ table_html }}">
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="fa-solid fa-file-csv me-1"></i> Download CSV
+          </button>
+        </form>
 
-      <!-- PDF Download -->
-      <form action="/download_pdf" method="post" style="margin-bottom: 20px;">
-        <input type="hidden" name="data" value="{{ table_html }}">
-        <button type="submit" class="btn btn-danger">Download PDF</button>
-      </form>
+        <form action="/download_pdf" method="post">
+          <input type="hidden" name="data" value="{{ table_html }}">
+          <button type="submit" class="btn btn-danger btn-sm">
+            <i class="fa-solid fa-file-pdf me-1"></i> Download PDF
+          </button>
+        </form>
+      </div>
+    </section>
 
-      <hr>
-
-      <!-- Results Table -->
-      <h2>Results</h2>
-      <p class="text-muted">ΔE is relative to the reference well.</p>
-      <div class="table-responsive">
-        {{ table_html|safe }}
+    <!-- ΔE HEATMAP -->
+    <section id="section-heatmap" class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">ΔE Heatmap (Plate Layout)</div>
+          <div class="card-subtitle">
+            Visualizes ΔE values (relative to reference well) across the 8×12 plate.
+          </div>
+        </div>
       </div>
 
+      <div id="heatmapContainer" class="mb-2"></div>
+      <div class="heatmap-legend">
+        <span style="display:inline-block;width:14px;height:8px;background:#e0f2ff;border-radius:2px;border:1px solid var(--border);margin-right:4px;"></span>
+        Low ΔE (close to reference) &nbsp;&nbsp;
+        <span style="display:inline-block;width:14px;height:8px;background:#ff1744;border-radius:2px;border:1px solid var(--border);margin-right:4px;"></span>
+        High ΔE (far from reference)
+      </div>
+    </section>
+
+    <!-- SPECTRAL CURVES SECTION (UI STUB) -->
+    <section id="section-spectra" class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">Spectral Curves (Per Well)</div>
+          <div class="card-subtitle">
+            UI scaffold for plotting absorbance spectra wells — backend can later expose per-well spectral data as JSON.
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-2 align-items-center mb-3">
+        <div class="col-auto"><strong>Select well:</strong></div>
+        <div class="col-auto">
+          <select id="spectralWellSelect" class="form-select form-select-sm">
+            {% for w in detected_wells %}
+              <option value="{{ w }}">{{ w }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <button id="btnShowSpectrum" class="btn btn-outline-primary btn-sm">
+            Show Spectral Curve
+          </button>
+        </div>
+      </div>
+
+      <div id="spectralPlaceholder" class="spectral-placeholder">
+        Spectral plotting requires access to full absorbance vs wavelength data from the backend.
+        This UI is ready: you can later expose a JSON endpoint (e.g., `/spectra?well=A1`) and drive a chart library here.
+      </div>
+    </section>
+
+    <!-- RESULTS TABLE -->
+    <section class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">Results Table</div>
+          <div class="card-subtitle">
+            XYZ, Lab, and ΔE values per well. ΔE is relative to the selected reference well.
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        {{ table_html | safe }}
+      </div>
+    </section>
+
     {% endif %}
-  </div>
+
+    <!-- ABOUT / LANDING SECTION -->
+    <section id="section-about" class="glass-card">
+      <div class="card-header-line">
+        <div>
+          <div class="card-title">About This Tool</div>
+          <div class="card-subtitle">Built for high-precision spectral color characterization.</div>
+        </div>
+      </div>
+
+      <p style="font-size:14px;">
+        This web application converts full absorbance spectra into CIE XYZ, CIE Lab, and ΔE values using a standardized
+        pipeline under illuminant D65. It is designed for workflows such as 96-well plate spectroscopy where subtle
+        wavelength shifts and color changes need to be tracked numerically.
+      </p>
+
+      <ul class="about-list">
+        <li>Upload plate datasets directly from your spectrometer export (.xlsx).</li>
+        <li>Automatically detect wells and highlight missing or incomplete data.</li>
+        <li>Compute CIE XYZ → CIE Lab → ΔE per well relative to a chosen reference.</li>
+        <li>Export results as CSV for analysis or PDF for reporting.</li>
+      </ul>
+    </section>
+
+  </main>
+</div>
+
+<!-- Scripts -->
+<script>
+  // Dark mode toggle
+  document.getElementById('darkToggle').onclick = () => {
+    const current = document.body.getAttribute('data-theme');
+    document.body.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+  };
+
+  // Drag-and-drop upload
+  const dropZone = document.getElementById('dropZone');
+  const inputFile = document.getElementById('dataset');
+
+  dropZone.onclick = () => inputFile.click();
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.style.background = "rgba(13,110,253,0.10)";
+  });
+  dropZone.addEventListener('dragleave', e => {
+    dropZone.style.background = "rgba(13,110,253,0.03)";
+  });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    inputFile.files = e.dataTransfer.files;
+    dropZone.style.background = "rgba(13,110,253,0.03)";
+  });
+
+  // Show loading overlay on upload submit
+  const mainForm = document.getElementById('mainForm');
+  if (mainForm) {
+    mainForm.onsubmit = () => {
+      document.getElementById('loadingOverlay').style.display = 'flex';
+    };
+  }
+
+  // Spectral button stub
+  const spectralBtn = document.getElementById('btnShowSpectrum');
+  if (spectralBtn) {
+    spectralBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      alert("Spectral plotting UI is ready. To enable real plots, add a backend endpoint that returns wavelength/absorbance arrays for the selected well.");
+    });
+  }
+
+  // ΔE heatmap builder (from table_html)
+  function buildHeatmapFromTable() {
+    const heatmapContainer = document.getElementById('heatmapContainer');
+    if (!heatmapContainer) return;
+
+    const table = document.querySelector('table');
+    if (!table) {
+      heatmapContainer.innerHTML = "<small>No result table found.</small>";
+      return;
+    }
+
+    // Find header indices
+    const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
+    if (!headerRow) return;
+
+    const headers = Array.from(headerRow.children).map(th => th.innerText.trim());
+    const wellIndex = headers.indexOf('Well');
+    const deltaIndex = headers.findIndex(h => h.startsWith('DeltaE_vs_'));
+
+    if (wellIndex === -1 || deltaIndex === -1) {
+      heatmapContainer.innerHTML = "<small>Could not locate Well/ΔE column.</small>";
+      return;
+    }
+
+    // Collect well → ΔE map
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const wellToDelta = {};
+    let maxDelta = 0;
+
+    rows.forEach(tr => {
+      const cells = Array.from(tr.children);
+      const well = cells[wellIndex]?.innerText.trim();
+      const deltaStr = cells[deltaIndex]?.innerText.trim();
+      const d = parseFloat(deltaStr);
+      if (well && !isNaN(d)) {
+        wellToDelta[well] = d;
+        if (d > maxDelta) maxDelta = d;
+      }
+    });
+
+    // Build 8x12 grid (A–H, 1–12)
+    const plateRows = "ABCDEFGH".split("");
+    const plateCols = Array.from({length: 12}, (_, i) => i + 1);
+
+    const grid = document.createElement('div');
+    grid.className = "heatmap-grid";
+
+    // Top-left empty label
+    const corner = document.createElement('div');
+    corner.className = "heatmap-cell heatmap-label";
+    grid.appendChild(corner);
+
+    // Column labels
+    plateCols.forEach(col => {
+      const label = document.createElement('div');
+      label.className = "heatmap-cell heatmap-label";
+      label.textContent = col;
+      grid.appendChild(label);
+    });
+
+    // Data rows
+    plateRows.forEach(rowLetter => {
+      // Row label
+      const rowLabel = document.createElement('div');
+      rowLabel.className = "heatmap-cell heatmap-label";
+      rowLabel.textContent = rowLetter;
+      grid.appendChild(rowLabel);
+
+      // 12 wells
+      plateCols.forEach(col => {
+        const wellName = rowLetter + col;
+        const cell = document.createElement('div');
+        cell.className = "heatmap-cell";
+        const d = wellToDelta[wellName];
+
+        if (d != null && maxDelta > 0) {
+          const t = Math.min(d / maxDelta, 1.0); // 0..1
+          // Interpolate from light blue to red
+          const r = Math.round(224 + (255 - 224) * t);
+          const g = Math.round(242 - 242 * t);
+          const b = Math.round(255 - 211 * t);
+          cell.style.backgroundColor = `rgb(${r},${g},${b})`;
+          cell.textContent = Math.round(d * 10) / 10;
+        } else {
+          cell.style.backgroundColor = "transparent";
+          cell.style.opacity = 0.4;
+          cell.textContent = "";
+        }
+
+        grid.appendChild(cell);
+      });
+    });
+
+    heatmapContainer.innerHTML = "";
+    heatmapContainer.appendChild(grid);
+  }
+
+  document.addEventListener('DOMContentLoaded', buildHeatmapFromTable);
+</script>
+
 </body>
 </html>
