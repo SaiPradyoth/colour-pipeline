@@ -4,16 +4,18 @@ import numpy as np
 import colour
 
 
-def process_plate(excel_file, reference_well=None):
+def _load_plate_dataframe(excel_file):
     """
-    Full spectral → XYZ → Lab → ΔE pipeline for 96-well plates.
+    Shared helper to:
+      - load the Excel file
+      - detect the 'Wavelength' header row
+      - clean up columns
+      - detect actual well columns (A1, B3, etc.)
 
     Returns:
-        df_results        = DataFrame with color metrics
-        available_wells   = list of actual detected well IDs
-        reference_well    = the reference well used for ΔE
+        df              = cleaned DataFrame
+        available_wells = list of well IDs present in the file
     """
-
     # -------------------------------------------------
     # STEP 1 — Load raw file WITHOUT assuming header
     # -------------------------------------------------
@@ -52,6 +54,22 @@ def process_plate(excel_file, reference_well=None):
 
     if not available_wells:
         raise ValueError("No well columns detected in this file.")
+
+    return df, available_wells
+
+
+def process_plate(excel_file, reference_well=None):
+    """
+    Full spectral → XYZ → Lab → ΔE pipeline for 96-well plates.
+
+    Returns:
+        df_results        = DataFrame with color metrics
+        available_wells   = list of actual detected well IDs
+        reference_well    = the reference well used for ΔE
+    """
+
+    # Load + clean data, detect wells
+    df, available_wells = _load_plate_dataframe(excel_file)
 
     # Decide reference well
     if reference_well is None:
@@ -130,3 +148,22 @@ def process_plate(excel_file, reference_well=None):
     # RETURN 3 things:
     # -------------------------------------------------
     return df_results, available_wells, reference_well
+
+
+def get_well_spectrum(excel_file, well_name):
+    """
+    Return raw absorbance spectrum for a single well.
+
+    Output:
+        wavelengths: list[float]
+        absorbance: list[float]
+    """
+    df, available_wells = _load_plate_dataframe(excel_file)
+
+    if well_name not in available_wells:
+        raise ValueError(f"Well {well_name} not present in dataset.")
+
+    wavelengths = df["Wavelength"].values.astype(float)
+    absorbance = df[well_name].values.astype(float)
+
+    return wavelengths.tolist(), absorbance.tolist()
