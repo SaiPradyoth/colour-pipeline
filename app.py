@@ -1,6 +1,6 @@
 # app.py
-from flask import Flask, render_template, request, send_file
-from pipeline import process_plate
+from flask import Flask, render_template, request, send_file, jsonify
+from pipeline import process_plate, get_well_spectrum
 
 from bs4 import BeautifulSoup
 from reportlab.lib.pagesizes import letter
@@ -110,6 +110,31 @@ def recalculate():
 
     except Exception as e:
         return f"Error recalculating: {e}", 500
+
+
+# ---------------------------------------------------
+# PER-WELL SPECTRUM ENDPOINT (JSON)
+# ---------------------------------------------------
+@app.route("/spectra", methods=["GET"])
+def spectra():
+    well = request.args.get("well")
+    file_path = request.args.get("file")
+
+    if not well or not file_path:
+        return jsonify({"error": "Missing 'well' or 'file' parameter"}), 400
+
+    if not os.path.exists(file_path):
+        return jsonify({"error": "File not found"}), 404
+
+    try:
+        wavelengths, absorbance = get_well_spectrum(file_path, well)
+        return jsonify({
+            "well": well,
+            "wavelengths": wavelengths,
+            "absorbance": absorbance,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------------------------------------------------
