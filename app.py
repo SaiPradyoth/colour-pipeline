@@ -127,6 +127,7 @@ def index():
     reference_well = None
     file_token = None
     uploaded_filename = None
+    wavelength_list = []
 
     if request.method == "POST":
         # Read current UI selections from the form
@@ -166,6 +167,7 @@ def index():
                 # Raw absorbance matrix (Scientist Mode)
                 df_raw, _ = get_raw_matrix(filepath)
                 raw_matrix_html = dataframe_to_html(df_raw)
+                wavelength_list = df_raw["Wavelength"].astype(float).tolist()
 
                 plate_type = plate_type_norm
 
@@ -193,6 +195,7 @@ def index():
         observer_angle=observer_angle,
         plate_rows=plate_rows,
         plate_cols=plate_cols,
+        wavelength_list=wavelength_list,
     )
 
 
@@ -497,5 +500,69 @@ def download_raw_pdf():
 # =====================================================
 # START APP (dev only)
 # =====================================================
+# =====================================================
+# COMPUTE WAVELENGTH RATIOS
+# =====================================================
+@app.route("/compute_ratio", methods=["POST"])
+def compute_ratio_route():
+    file_token = request.form.get("file_token")
+    wlA = request.form.get("wlA")
+    wlB = request.form.get("wlB")
+    operation = request.form.get("operation")
+
+    if not file_token:
+        return "Missing file token.", 400
+
+    filepath = token_to_path(file_token)
+    if not os.path.exists(filepath):
+        return "Dataset not found on server.", 400
+
+    try:
+        # Load raw matrix
+        df_raw, available_wells = get_raw_matrix(filepath)
+
+        wlA = float(wlA)
+        wlB = float(wlB)
+
+        # Find the row index for those wavelengths
+        rowA = df_raw.index[df_raw["Wavelength"] == wlA][0]
+        rowB = df_raw.index[df_raw["Wavelength"] == wlB][0]
+
+        # Extract absorbance at those wavelengths for all wells
+        A = df_raw.iloc[rowA][1:]   # skip "Wavelength"
+        B = df_raw.iloc[rowB][1:]   # skip "Wavelength"
+
+        if operation == "divide":
+            result = A / B
+            label = f"{wlA} / {wlB}"
+        elif operation == "subtract":
+            result = A - B
+            label = f"{wlA} – {wlB}"
+        elif operation == "normdiff":
+            result = (A - B) / B
+            label = f"({wlA} – {wlB}) / {wlB}"
+        elif operation == "average":
+            result = (A + B) / 2
+            label = f"({wlA} + {wlB}) / 2"
+        else:
+            return "Unknown operation.", 400
+
+        # Build results table
+        df_out = (
+            pd.DataFrame({
+                "Well": available_wells,
+                "Result": result.values
+            })
+            .round(5)
+        )
+
+        return df_out.to_html(
+            classes="table table-sm table-striped table-hover align-middle",
+            index=False
+        )
+
+    except Exception as e:
+        return f"Error computing ratio: {e}", 500
+
 if __name__ == "__main__":
     app.run(debug=True)

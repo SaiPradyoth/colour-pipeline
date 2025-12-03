@@ -290,3 +290,25 @@ def get_wells_spectra(excel_file, wells):
         spectra[w] = df[w].values.astype(float).tolist()
 
     return wavelengths.tolist(), spectra
+def compute_ratio(df_abs, wlA, wlB, operation):
+    wlA = str(wlA)
+    wlB = str(wlB)
+
+    if wlA not in df_abs.columns:
+        raise ValueError(f"Wavelength {wlA} not found in dataset.")
+    if wlB not in df_abs.columns:
+        raise ValueError(f"Wavelength {wlB} not found in dataset.")
+
+    A = df_abs[wlA].astype(float)
+    B = df_abs[wlB].astype(float)
+
+    if operation == "divide":
+        return A / B
+    elif operation == "subtract":
+        return A - B
+    elif operation == "normdiff":
+        return (A - B) / B
+    elif operation == "average":
+        return (A + B) / 2
+    else:
+        raise ValueError("Unknown ratio operation.")

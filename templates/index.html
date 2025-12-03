@@ -349,6 +349,7 @@ html[data-theme="dark"] #results-table td {
         <li><button class="nav-link active" data-page="dashboard">📊 Dashboard</button></li>
         <li><button class="nav-link" data-page="heatmap" {% if not table_html %}disabled{% endif %}>🟩 ΔE Heatmap</button></li>
         <li><button class="nav-link" data-page="spectral" {% if not table_html %}disabled{% endif %}>📈 Spectral Curves</button></li>
+        <li><button class="nav-link" data-page="ratios" {% if not table_html %}disabled{% endif %}>📐 Ratios</button></li>
         <li><button class="nav-link" data-page="scientist" {% if not raw_matrix_html %}disabled{% endif %}>🧪 Scientist Mode</button></li>
         <li><button class="nav-link" data-page="about">❓ Help</button></li>
       </ul>
@@ -602,16 +603,100 @@ html[data-theme="dark"] #results-table td {
       {% endif %}
     </section>
 
+<!-- RATIO PAGE -->
+<section id="page-ratios" class="page-section">
+  {% if table_html %}
+  <div class="card-elevated mb-4">
+    <h5 class="card-title">Wavelength Ratios</h5>
+    <p class="card-subtitle">Compute simple wavelength ratios for every well.</p>
+
+    <form id="ratio-form" class="row g-3 mt-2">
+      <div class="col-md-4">
+        <label class="small fw-bold">Wavelength A</label>
+        <select id="ratio-wl-A" class="form-select form-select-sm">
+          {% for wl in wavelength_list %}
+          <option value="{{ wl }}">{{ wl }} nm</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="small fw-bold">Wavelength B</label>
+        <select id="ratio-wl-B" class="form-select form-select-sm">
+          {% for wl in wavelength_list %}
+          <option value="{{ wl }}">{{ wl }} nm</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="small fw-bold">Operation</label>
+        <select id="ratio-operation" class="form-select form-select-sm">
+          <option value="divide">A / B</option>
+          <option value="subtract">A – B</option>
+          <option value="normdiff">(A – B) / B</option>
+          <option value="average">(A + B) / 2</option>
+        </select>
+      </div>
+    </form>
+
+    <button id="ratio-run-btn" class="btn btn-primary btn-sm mt-3">Compute Ratio</button>
+
+    <div id="ratio-result" class="table-responsive mt-4"></div>
+  </div>
+
+  {% else %}
+  <div class="card-elevated">
+    <p class="small">Upload a dataset on the Dashboard to compute ratios.</p>
+  </div>
+  {% endif %}
+</section>
+
+
     <!-- ABOUT -->
     <section id="page-about" class="page-section">
-      <div class="card-elevated">
-        <h5 class="card-title">About</h5>
-        <p class="small mt-2">
-          This tool converts absorbance spectra → XYZ → Lab → ΔE2000 and lets you explore well-to-well differences
-          via a plate heatmap, spectral overlays, and full raw data matrix.
-        </p>
-      </div>
-    </section>
+  <div class="card-elevated">
+    <h5 class="card-title">About</h5>
+
+    <p class="small mt-2">
+      This tool converts absorbance spectra → XYZ → Lab → ΔE2000 and lets you explore well-to-well differences
+      via a plate heatmap, spectral overlays, and the full raw data matrix.
+    </p>
+
+    <ul class="small mt-3" style="padding-left:18px; line-height:1.45;">
+      <li><strong>Absorbance spectra:</strong> How much light each well absorbs at each wavelength — like a rainbow measured with numbers.</li>
+
+      <li><strong>XYZ:</strong> A color model:
+        <br>• X ≈ red content
+        <br>• Y ≈ green / brightness
+        <br>• Z ≈ blue content
+      </li>
+
+      <li><strong>Lab (L*, a*, b*):</strong> A color space based on human vision:
+        <br>• L* = light ↔ dark
+        <br>• a* = red (+) ↔ green (–)
+        <br>• b* = yellow (+) ↔ blue (–)
+      </li>
+
+      <li><strong>ΔE2000:</strong> How different two colors are (0 = identical; higher = more different).</li>
+
+      <li><strong>Reference well:</strong> The well chosen as the starting color for ΔE comparison.</li>
+
+      <li><strong>Plate type:</strong> Number of wells on the microplate (48, 96, 384).</li>
+
+      <li><strong>Illuminant:</strong> The assumed light source (daylight, warm light, cool light, etc.).</li>
+
+      <li><strong>Observer angle:</strong> The viewing geometry of the “virtual eye” (2° or 10°).</li>
+
+      <li><strong>ΔE heatmap:</strong> A colored map showing which wells are similar or different.</li>
+
+      <li><strong>Spectral curves:</strong> Smooth lines showing absorbance vs wavelength.</li>
+
+      <li><strong>Raw data matrix:</strong> The complete table of all original spectrometer values.</li>
+    </ul>
+  </div>
+</section>
+
 
   </main>
 </div>
@@ -659,6 +744,7 @@ const pages = {
   dashboard: document.getElementById("page-dashboard"),
   heatmap: document.getElementById("page-heatmap"),
   spectral: document.getElementById("page-spectral"),
+  ratios: document.getElementById("page-ratios"),
   scientist: document.getElementById("page-scientist"),
   about: document.getElementById("page-about")
 };
@@ -1102,6 +1188,26 @@ document.getElementById("spectral-print-btn")?.addEventListener("click", () => {
     win.focus();
     win.print();
   }
+});
+document.getElementById("ratio-run-btn")?.addEventListener("click", async () => {
+  const wlA = document.getElementById("ratio-wl-A").value;
+  const wlB = document.getElementById("ratio-wl-B").value;
+  const op  = document.getElementById("ratio-operation").value;
+  const token = document.getElementById("fileToken").value;
+
+  const formData = new FormData();
+  formData.append("file_token", token);
+  formData.append("wlA", wlA);
+  formData.append("wlB", wlB);
+  formData.append("operation", op);
+
+  const resp = await fetch("/compute_ratio", {
+    method: "POST",
+    body: formData
+  });
+
+  const html = await resp.text();
+  document.getElementById("ratio-result").innerHTML = html;
 });
 
 /*********************************************************
