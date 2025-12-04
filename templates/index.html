@@ -225,22 +225,19 @@
       color: #e5e7eb;
     }
     /* Dark mode row + cell background fix */
-html[data-theme="dark"] #results-table table {
-  background: #0b1120 !important;
-}
-
-html[data-theme="dark"] #results-table tr {
-  background: #0f172a !important;
-}
-
-html[data-theme="dark"] #results-table tr:nth-child(even) {
-  background: #111827 !important;
-}
-
-html[data-theme="dark"] #results-table td {
-  color: #1b2028 !important;
-  border-color: #1e293b !important;
-}
+    html[data-theme="dark"] #results-table table {
+      background: #0b1120 !important;
+    }
+    html[data-theme="dark"] #results-table tr {
+      background: #0f172a !important;
+    }
+    html[data-theme="dark"] #results-table tr:nth-child(even) {
+      background: #111827 !important;
+    }
+    html[data-theme="dark"] #results-table td {
+      color: #1b2028 !important;
+      border-color: #1e293b !important;
+    }
     #results-table td, #results-table th {
       padding: 8px 10px;
       white-space: nowrap;
@@ -300,6 +297,7 @@ html[data-theme="dark"] #results-table td {
   <div class="text-center text-light">
     <div class="spinner-border" style="width: 48px; height: 48px;"></div>
     <div class="mt-2 small">Processing plate…</div>
+    <div class="small text-muted mt-1" id="loading-target-message"></div>
   </div>
 </div>
 
@@ -356,7 +354,7 @@ html[data-theme="dark"] #results-table td {
     </div>
 
     <div class="sidebar-footer">
-      <div>ΔE2000 vs reference well.</div>
+      <div>ΔE2000 vs Target.</div>
       <button id="theme-toggle" class="theme-toggle" type="button">
         <div class="theme-toggle-thumb">☀️</div>
         <span class="theme-toggle-label">Light mode</span>
@@ -380,7 +378,7 @@ html[data-theme="dark"] #results-table td {
       <!-- Upload card -->
       <div class="card-elevated mb-4">
         <h5 class="card-title">Upload dataset</h5>
-        <p class="card-subtitle">Supports 48-well, 96-well and 384-well absorbance spectra (.xlsx).</p>
+        <p class="card-subtitle">Supports 48-well, 96-well and 384-well absorbance spectra (.xlsx, .xls, .csv).</p>
 
         <form id="upload-form" method="post" enctype="multipart/form-data">
           <div class="row g-3 mt-2">
@@ -390,7 +388,6 @@ html[data-theme="dark"] #results-table td {
                 <div class="fw-semibold">Drag &amp; drop Excel here</div>
                 <div class="text-muted small">or click to browse (.xlsx, .xls, .csv)</div>
               </div>
-              <div class="text-muted small">or click to browse (.xlsx, .xls, .csv)</div>
               <input id="dataset" name="dataset" type="file" accept=".xlsx, .xls, .csv" class="d-none" />
               <div id="upload-status" class="small mt-2 text-muted">
                 {% if uploaded_filename %}
@@ -415,12 +412,35 @@ html[data-theme="dark"] #results-table td {
                 <option value="F2" {% if illuminant_key=='F2' %}selected{% endif %}>F2</option>
                 <option value="E" {% if illuminant_key=='E' %}selected{% endif %}>E</option>
               </select>
-
+              
               <label class="small fw-bold mt-3">Observer angle</label>
               <select id="observer_angle" name="observer_angle" class="form-select form-select-sm">
                 <option value="2" {% if observer_angle=='2' %}selected{% endif %}>2° (CIE 1931)</option>
                 <option value="10" {% if observer_angle=='10' %}selected{% endif %}>10° (CIE 1964)</option>
               </select>
+
+              <!-- NEW: BLANK WELL SELECTOR (FOR NOISE SUBTRACTION) -->
+              <label class="small fw-bold mt-3">Blank/Background Well(s)</label>
+              <input type="text" name="blank_wells" class="form-control form-control-sm mb-2" 
+                     value="{{ blank_input or '' }}" placeholder="e.g. A1, A2">
+              <div class="form-text mb-3" style="font-size: 0.75rem;">
+                  Absorbance noise subtraction (use wells with only buffer/solvent).
+              </div>
+              
+              <!-- NEW: FIXED REFERENCE COLOR TARGET -->
+              <label class="small fw-bold mt-3">ΔE Zero Point Target</label>
+              <select id="ref_target_preset" name="ref_target_preset" class="form-select form-select-sm mb-2">
+                  <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
+                  <option value="Buffer" {% if ref_target_preset=='Buffer' %}selected{% endif %}>Blank/Buffer</option>
+                  <option value="Black" {% if ref_target_preset=='Black' %}selected{% endif %}>Perfect Black</option>
+                  <option value="Custom" {% if ref_target_preset=='Custom' %}selected{% endif %}>Custom L*a*b*</option>
+              </select>
+
+              <div id="custom_lab_inputs" class="row g-2" style="display: none;">
+                  <div class="col-4"><input type="number" step="0.01" name="custom_L" class="form-control form-control-sm" placeholder="L*" value="{{ custom_L or '' }}"></div>
+                  <div class="col-4"><input type="number" step="0.01" name="custom_a" class="form-control form-control-sm" placeholder="a*" value="{{ custom_a or '' }}"></div>
+                  <div class="col-4"><input type="number" step="0.01" name="custom_b" class="form-control form-control-sm" placeholder="b*" value="{{ custom_b or '' }}"></div>
+              </div>
             </div>
           </div>
 
@@ -447,24 +467,47 @@ html[data-theme="dark"] #results-table td {
             {% if missing_wells %}
             <p class="small"><strong>Missing:</strong> {{ missing_wells | join(', ') }}</p>
             {% endif %}
+            {% if used_blanks %}
+            <p class="small text-primary mb-0 mt-2"><strong>Blanks Applied:</strong> {{ used_blanks | join(', ') }}</p>
+            {% endif %}
           </div>
         </div>
 
         <div class="col-lg-6">
           <div class="card-elevated h-100">
             <h5 class="card-title">Reference &amp; export</h5>
-            <p class="card-subtitle">ΔE2000 is relative to the selected reference well.</p>
+            <p class="card-subtitle">ΔE2000 is relative to the <strong>{{ reference_well }}</strong> Target.</p>
 
             <form id="recalc-form" action="/recalculate" method="post" class="mt-2">
-              <label class="small fw-bold">Reference well</label>
-              <select name="reference_well" class="form-select form-select-sm mb-2">
-                {% for w in detected_wells %}
-                <option value="{{ w }}" {% if w == reference_well %}selected{% endif %}>{{ w }}</option>
-                {% endfor %}
+                
+                <!-- NEW: BLANK WELL SELECTOR (FOR NOISE SUBTRACTION) -->
+              <label class="small fw-bold">Blank/Background Well(s)</label>
+              <input type="text" name="blank_wells" class="form-control form-control-sm mb-2" 
+                     value="{{ blank_input or '' }}" placeholder="e.g. A1, A2">
+                <div class="form-text" style="font-size: 0.75rem;">
+                    Wells used for Absorbance noise subtraction.
+                </div>
+                
+                <!-- NEW: FIXED REFERENCE COLOR TARGET -->
+              <label class="small fw-bold mt-3">ΔE Zero Point Target</label>
+              <select id="ref_target_preset_recalc" name="ref_target_preset" class="form-select form-select-sm mb-2">
+                  <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
+                  <option value="Buffer" {% if ref_target_preset=='Buffer' %}selected{% endif %}>Blank/Buffer</option>
+                  <option value="Black" {% if ref_target_preset=='Black' %}selected{% endif %}>Perfect Black</option>
+                  <option value="Custom" {% if ref_target_preset=='Custom' %}selected{% endif %}>Custom L*a*b*</option>
               </select>
 
+              <div id="custom_lab_inputs_recalc" class="row g-2 mb-2" style="display: none;">
+                  <div class="col-4"><input type="number" step="0.01" name="custom_L" class="form-control form-control-sm" placeholder="L*" value="{{ custom_L or '' }}"></div>
+                  <div class="col-4"><input type="number" step="0.01" name="custom_a" class="form-control form-control-sm" placeholder="a*" value="{{ custom_a or '' }}"></div>
+                  <div class="col-4"><input type="number" step="0.01" name="custom_b" class="form-control form-control-sm" placeholder="b*" value="{{ custom_b or '' }}"></div>
+              </div>
+                
+                <p class="small text-muted mt-2 mb-2">Target ΔE is zero at: <strong>{{ target_display }}</strong></p>
+                
               <input type="hidden" name="file_token" value="{{ file_token }}" />
               <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename or '' }}" />
+              <input type="hidden" name="reference_well_display" value="{{ ref_target_preset }}" />
               <input type="hidden" id="recalc_plate_type" name="plate_type" value="{{ plate_type }}" />
               <input type="hidden" id="recalc_illuminant_key" name="illuminant_key" value="{{ illuminant_key }}" />
               <input type="hidden" id="recalc_observer_angle" name="observer_angle" value="{{ observer_angle }}" />
@@ -504,7 +547,7 @@ html[data-theme="dark"] #results-table td {
     <section id="page-heatmap" class="page-section">
       {% if table_html %}
       <div class="card-elevated">
-        <h5 class="card-title">ΔE heatmap</h5>
+        <h5 class="card-title">ΔE heatmap (vs {{ reference_well }} Target)</h5>
         <p class="card-subtitle">Dynamic plate layout with clickable wells.</p>
 
         <div class="heatmap-container mt-3">
@@ -672,8 +715,11 @@ html[data-theme="dark"] #results-table td {
         <br>• Y ≈ green / brightness
         <br>• Z ≈ blue content
       </li>
-
-      <li><strong>Lab (L*, a*, b*):</strong> A color space based on human vision:
+      <li><strong> Perfect White Tile</strong>: L* = 95, a* = 0, b* = 0</li>
+      <li><strong> Blank/Buffer</strong> : L* = 100, a* = 0, b* = 0</li>
+      <li><strong> Perfect Black</strong> : L* = 0, a* = 0, b* = 0</li>
+      
+        <li><strong>Lab (L*, a*, b*):</strong> A color space based on human vision:
         <br>• L* = light ↔ dark
         <br>• a* = red (+) ↔ green (–)
         <br>• b* = yellow (+) ↔ blue (–)
@@ -681,7 +727,9 @@ html[data-theme="dark"] #results-table td {
 
       <li><strong>ΔE2000:</strong> How different two colors are (0 = identical; higher = more different).</li>
 
-      <li><strong>Reference well:</strong> The well chosen as the starting color for ΔE comparison.</li>
+      <li><strong>Reference Target:</strong> The fixed L*a*b* value used as the ΔE = 0 point (e.g., Perfect White).</li>
+
+      <li><strong>Blank Wells:</strong> Wells used to subtract background noise (e.g., buffer/solvent).</li>
 
       <li><strong>Plate type:</strong> Number of wells on the microplate (48, 96, 384).</li>
 
@@ -833,6 +881,31 @@ function syncRecalc() {
   if (el) el.addEventListener("change", syncRecalc);
 });
 syncRecalc();
+
+// NEW JAVASCRIPT FOR TARGET INPUT TOGGLE
+function toggleCustomLabInputs() {
+    const selector = document.getElementById('ref_target_preset');
+    const customInputs = document.getElementById('custom_lab_inputs');
+    if (selector && customInputs) {
+        customInputs.style.display = selector.value === 'Custom' ? 'flex' : 'none';
+    }
+    
+    const selectorRecalc = document.getElementById('ref_target_preset_recalc');
+    const customInputsRecalc = document.getElementById('custom_lab_inputs_recalc');
+    if (selectorRecalc && customInputsRecalc) {
+        customInputsRecalc.style.display = selectorRecalc.value === 'Custom' ? 'flex' : 'none';
+    }
+    
+    // Update loading message hint based on selection
+    const currentSelector = selectorRecalc || selector;
+    const loadingMessage = document.getElementById('loading-target-message');
+    if (loadingMessage && currentSelector) {
+        loadingMessage.textContent = `Target: ${currentSelector.options[currentSelector.selectedIndex].text.split('(')[0].trim()}`;
+    }
+}
+
+document.getElementById('ref_target_preset')?.addEventListener('change', toggleCustomLabInputs);
+document.getElementById('ref_target_preset_recalc')?.addEventListener('change', toggleCustomLabInputs);
 
 /*********************************************************
  HEATMAP BUILDER (ΔE2000)
@@ -1222,6 +1295,7 @@ document.getElementById("ratio-run-btn")?.addEventListener("click", async () => 
  FINAL INIT
 *********************************************************/
 updateChartTheme();
+toggleCustomLabInputs(); // <--- Run on load to set initial state
 </script>
 
 </body>

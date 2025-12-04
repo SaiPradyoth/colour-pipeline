@@ -1,21 +1,23 @@
 # ================================
 # app.py
-# Flask front-end for Spectral → Color → ΔE Analyzer
+# Flask front-end for Spectral -> Color -> DeltaE Analyzer
+# Version 2.2: Fixed PDF Layout & Math Corrections
 # ================================
 
 import os
 import uuid
 import pandas as pd
-import numpy as np  # <--- FIXED: Added this
+import numpy as np
 from flask import Flask, render_template, request, send_file, jsonify
 
 from bs4 import BeautifulSoup
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 
+# Import from your corrected pipeline
 from pipeline import (
     process_plate,
     get_well_spectrum,
@@ -29,15 +31,18 @@ app = Flask(__name__)
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("results", exist_ok=True)
 
+# Fixed L*a*b* Presets
+LAB_PRESETS = {
+    "Buffer": (100.0, 0.0, 0.0),      # Perfect White/Clear
+    "WhiteTile": (95.0, -1.0, 1.0),   # Typical slightly bluish commercial white reference tile
+    "Black": (0.0, 0.0, 0.0),         # Perfect Black
+}
+
 # --------------------------------
 # Helpers
 # --------------------------------
 def make_token() -> str:
     return uuid.uuid4().hex
-
-def token_to_path(token: str) -> str:
-    base = os.path.join("uploads", token)
-    return base + ".bin" 
 
 def normalize_plate_type(plate_type: str) -> str:
     if not plate_type: return "96"
@@ -69,20 +74,23 @@ def dataframe_to_html(df: pd.DataFrame) -> str:
     )
 
 # --------------------------------
-# PDF Generation Helper
+# PDF Generation Helper (FIXED LAYOUT)
 # --------------------------------
 def generate_pdf(df, title="Results"):
     filename = f"results/{uuid.uuid4().hex}.pdf"
+    # Use Landscape Letter (11 inch width, 8.5 inch height)
     doc = SimpleDocTemplate(filename, pagesize=landscape(letter))
     elements = []
     
     styles = getSampleStyleSheet()
-    elements.append(Paragraph(title, styles['Title']))
+    title_style = styles['Title']
+    title_style.fontSize = 16
+    elements.append(Paragraph(title, title_style))
+    elements.append(Spacer(1, 12))
 
-    # Convert DataFrame to list of lists
+    # Prepare data
     data = [df.columns.to_list()] + df.values.tolist()
     
-    # Round floats for display in PDF
     clean_data = []
     for row in data:
         new_row = []
@@ -93,15 +101,29 @@ def generate_pdf(df, title="Results"):
                 new_row.append(str(item))
         clean_data.append(new_row)
 
-    table = Table(clean_data)
+    # --- LAYOUT FIX: Dynamic Column Widths ---
+    # Usable width is roughly 9.5 inches (leaving margins)
+    # We distribute this evenly across all columns
+    num_cols = len(df.columns)
+    col_width = (9.5 * inch) / num_cols
+    
+    table = Table(clean_data, colWidths=[col_width] * num_cols)
+    
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        # Header formatting
+        ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.2, 0.2, 0.2)),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        
+        # Data formatting
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white]), # Alternating rows
     ]))
     
     elements.append(table)
@@ -122,20 +144,51 @@ def index():
     error = None
     detected_wells = None
     missing_wells = None
-    reference_well = None
+    
+    reference_well = "Buffer" 
     file_token = None
     uploaded_filename = None
     wavelength_list = []
+    
+    blank_input = ""
+    used_blanks = []
+    ref_target_preset = "Buffer"
+    custom_L, custom_a, custom_b = None, None, None
+    target_display = f"L*={LAB_PRESETS['Buffer'][0]:.2f}, a*={LAB_PRESETS['Buffer'][1]:.2f}, b*={LAB_PRESETS['Buffer'][2]:.2f}"
 
     if request.method == "POST":
         plate_type = request.form.get("plate_type", plate_type)
         illuminant_key = request.form.get("illuminant_key", illuminant_key)
         observer_angle = request.form.get("observer_angle", observer_angle)
         
+        ref_target_preset = request.form.get("ref_target_preset", "Buffer")
+        custom_L = request.form.get("custom_L")
+        custom_a = request.form.get("custom_a")
+        custom_b = request.form.get("custom_b")
+
+        lab_target = None
+        if ref_target_preset == "Custom":
+            try:
+                L = float(custom_L) if custom_L else 0.0
+                a = float(custom_a) if custom_a else 0.0
+                b = float(custom_b) if custom_b else 0.0
+                lab_target = (L, a, b)
+            except ValueError:
+                error = "Custom L*a*b* values must be valid numbers."
+        elif ref_target_preset in LAB_PRESETS:
+            lab_target = LAB_PRESETS[ref_target_preset]
+        else:
+            error = "Invalid Reference Target Preset selected."
+
+        blank_input = request.form.get("blank_wells", "")
+        blank_list = [b.strip() for b in blank_input.split(",") if b.strip()]
+
         uploaded = request.files.get("dataset")
         
         if not uploaded or uploaded.filename == "":
             error = "Please choose a valid file (.xlsx, .xls, .csv)."
+        elif lab_target is None and not error:
+             error = "L*a*b* Target must be defined."
         else:
             try:
                 uploaded_filename = uploaded.filename
@@ -146,25 +199,28 @@ def index():
 
                 plate_type_norm = normalize_plate_type(plate_type)
                 
-                # Run Pipeline
-                df_results, detected_wells, reference_well = process_plate(
+                dummy_ref_well = ref_target_preset 
+                df_results, detected_wells, _, used_blanks = process_plate(
                     excel_file=filepath,
-                    reference_well=None,
+                    reference_well=dummy_ref_well,
                     plate_type=plate_type_norm,
                     illuminant_key=illuminant_key,
                     observer_angle_deg=float(observer_angle),
+                    blank_wells=blank_list,
+                    lab_target=lab_target
                 )
 
                 file_token = token 
                 missing_wells = compute_missing_wells(detected_wells, plate_type_norm)
                 table_html = dataframe_to_html(df_results)
 
-                # Get Raw Matrix
                 df_raw, _ = get_raw_matrix(filepath)
                 raw_matrix_html = dataframe_to_html(df_raw)
                 wavelength_list = df_raw["Wavelength"].astype(float).tolist()
                 
                 plate_type = plate_type_norm
+                reference_well = ref_target_preset
+                target_display = f"L*={lab_target[0]:.2f}, a*={lab_target[1]:.2f}, b*={lab_target[2]:.2f}"
 
             except Exception as e:
                 error = f"Error processing file: {str(e)}"
@@ -187,16 +243,45 @@ def index():
         plate_rows=plate_rows,
         plate_cols=plate_cols,
         wavelength_list=wavelength_list,
+        blank_input=blank_input,
+        used_blanks=used_blanks,
+        ref_target_preset=ref_target_preset,
+        custom_L=custom_L, custom_a=custom_a, custom_b=custom_b,
+        target_display=target_display,
     )
 
 @app.route("/recalculate", methods=["POST"])
 def recalculate():
     file_token = request.form.get("file_token")
-    reference_well = request.form.get("reference_well") or None
+    reference_well_display = request.form.get("reference_well_display") or "Target"
     plate_type = request.form.get("plate_type", "96")
     illuminant_key = request.form.get("illuminant_key", "D65")
     observer_angle = request.form.get("observer_angle", "2")
     uploaded_filename = request.form.get("uploaded_filename") or None
+
+    ref_target_preset = request.form.get("ref_target_preset", "Buffer")
+    custom_L = request.form.get("custom_L")
+    custom_a = request.form.get("custom_a")
+    custom_b = request.form.get("custom_b")
+
+    lab_target = None
+    if ref_target_preset == "Custom":
+        try:
+            L = float(custom_L) if custom_L else 0.0
+            a = float(custom_a) if custom_a else 0.0
+            b = float(custom_b) if custom_b else 0.0
+            lab_target = (L, a, b)
+        except ValueError:
+            return "Custom L*a*b* values must be valid numbers.", 400
+    elif ref_target_preset in LAB_PRESETS:
+        lab_target = LAB_PRESETS[ref_target_preset]
+    
+    if lab_target is None:
+        return "Invalid Reference Target Preset selected.", 400
+    
+    blank_input = request.form.get("blank_wells", "")
+    blank_list = [b.strip() for b in blank_input.split(",") if b.strip()]
+    used_blanks = []
 
     if not file_token: return "Missing file token.", 400
 
@@ -211,12 +296,15 @@ def recalculate():
 
     try:
         plate_type_norm = normalize_plate_type(plate_type)
-        df_results, detected_wells, reference_well = process_plate(
+        
+        df_results, detected_wells, _, used_blanks = process_plate(
             excel_file=filepath,
-            reference_well=reference_well,
+            reference_well=ref_target_preset, 
             plate_type=plate_type_norm,
             illuminant_key=illuminant_key,
             observer_angle_deg=float(observer_angle),
+            blank_wells=blank_list,
+            lab_target=lab_target 
         )
 
         missing_wells = compute_missing_wells(detected_wells, plate_type_norm)
@@ -226,6 +314,8 @@ def recalculate():
         raw_matrix_html = dataframe_to_html(df_raw)
         plate_rows, plate_cols = get_plate_layout(plate_type_norm)
 
+        target_display = f"L*={lab_target[0]:.2f}, a*={lab_target[1]:.2f}, b*={lab_target[2]:.2f}"
+
         return render_template(
             "index.html",
             table_html=table_html,
@@ -233,7 +323,7 @@ def recalculate():
             error=None,
             detected_wells=detected_wells,
             missing_wells=missing_wells,
-            reference_well=reference_well,
+            reference_well=ref_target_preset,
             file_token=file_token,
             uploaded_filename=uploaded_filename,
             plate_type=plate_type_norm,
@@ -242,6 +332,11 @@ def recalculate():
             plate_rows=plate_rows,
             plate_cols=plate_cols,
             wavelength_list=df_raw["Wavelength"].astype(float).tolist(),
+            blank_input=blank_input,
+            used_blanks=used_blanks,
+            ref_target_preset=ref_target_preset,
+            custom_L=custom_L, custom_a=custom_a, custom_b=custom_b,
+            target_display=target_display,
         )
     except Exception as e:
         return f"Error recalculating: {e}", 500
@@ -344,16 +439,11 @@ def download_csv():
     df.to_csv(filename, index=False)
     return send_file(filename, as_attachment=True, download_name="results.csv")
 
-# ---------------------------------------------------
-# MISSING ROUTES ADDED BELOW
-# ---------------------------------------------------
-
 @app.route("/download_pdf", methods=["POST"])
 def download_pdf():
     table_html = request.form.get("data")
     if not table_html: return "No data", 400
     
-    # Parse HTML to DataFrame
     soup = BeautifulSoup(table_html, "html.parser")
     rows = soup.find_all("tr")
     if not rows: return "No data found", 400
@@ -403,7 +493,6 @@ def download_raw_pdf():
     
     try:
         df_raw, _ = get_raw_matrix(filepath)
-        # We might want to limit rows for PDF if it's huge, but let's try standard gen
         pdf_path = generate_pdf(df_raw, title="Raw Absorbance Matrix")
         return send_file(pdf_path, as_attachment=True, download_name="raw_matrix.pdf")
     except Exception as e:

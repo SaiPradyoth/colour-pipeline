@@ -1,7 +1,8 @@
 # ================================
 # pipeline.py
-# Core spectral → XYZ → Lab → ΔE2000 logic
+# Core spectral -> XYZ -> Lab -> DeltaE2000 logic
 # Now with Universal Loader (xls, xlsx, csv)
+# UPDATED: Fixed L* scaling bug (0-100 normalization)
 # ================================
 
 import pandas as pd
@@ -116,7 +117,7 @@ def get_raw_matrix(file_path):
 
 
 # --------------------------------
-# Main color pipeline (ΔE2000 only)
+# Main color pipeline (DeltaE2000 only)
 # --------------------------------
 def process_plate(
     excel_file,
@@ -124,9 +125,12 @@ def process_plate(
     plate_type="96",
     illuminant_key="D65",
     observer_angle_deg=2.0,
+    blank_wells=None,
+    lab_target=None, # <--- NEW ARGUMENT: Fixed L*a*b* target for Delta E
 ):
     """
-    Full spectral → XYZ → Lab → ΔE2000 pipeline.
+    Full spectral -> XYZ -> Lab -> DeltaE2000 pipeline.
+    Includes Baseline Correction (Blanking) and Fixed Reference Target.
     """
 
     # ---- Load & normalize data ----
@@ -135,19 +139,37 @@ def process_plate(
     # ---- Basic plate-type sanity check ----
     if str(plate_type) not in {"48", "96", "384"}:
         raise ValueError(f"Unsupported plate type: {plate_type}")
+        
+    if lab_target is None:
+        # CRITICAL: Ensures a target is always set from app.py
+        raise ValueError("L*a*b* Target (lab_target) must be provided.")
 
-    # ---- Reference well selection ----
-    if reference_well is None:
-        # Default to A10 if present, else A1, else first available
-        if "A10" in available_wells:
-            reference_well = "A10"
-        elif "A1" in available_wells:
-            reference_well = "A1"
-        else:
-            reference_well = available_wells[0]
+    # ---- 1. BASELINE CORRECTION (BLANKING) LOGIC ----
+    # If blanks are provided, calculate average and subtract from all wells
+    valid_blanks = []
+    if blank_wells:
+        # Filter to ensure user didn't type a non-existent well
+        valid_blanks = [w for w in blank_wells if w in available_wells]
+        
+        if valid_blanks:
+            # Calculate the average spectrum of the blank wells
+            # axis=1 means we average across the columns (wells) for each wavelength row
+            avg_blank_spectrum = df[valid_blanks].mean(axis=1)
+
+            # Subtract this average from ALL available wells
+            for well in available_wells:
+                df[well] = df[well] - avg_blank_spectrum
             
+            # Clip negative absorbance to 0 (Physically, T cannot be > 100%)
+            num_cols = df[available_wells].select_dtypes(include=[np.number]).columns
+            df[num_cols] = df[num_cols].clip(lower=0)
+            
+    # ---- Reference well determination (now only for naming the Delta E column) ----
+    if reference_well is None:
+        if "A10" in available_wells: reference_well = "A10"
+        elif "A1" in available_wells: reference_well = "A1"
+        else: reference_well = available_wells[0]     
     elif reference_well not in available_wells:
-        # Fallback if selected reference is missing in this specific file
         reference_well = available_wells[0]
 
     # ---- Build spectral shape from file wavelengths ----
@@ -157,9 +179,6 @@ def process_plate(
 
     interval = float(wavelengths[1] - wavelengths[0])
     
-    # Handle non-uniform intervals slightly gracefully (warn-ish) by taking average
-    # But for colour-science, we usually need uniform. 
-    # If the file is messy, this might crash, but SpectraMax is usually uniform.
     shape = colour.SpectralShape(
         wavelengths.min(),
         wavelengths.max(),
@@ -172,90 +191,96 @@ def process_plate(
     except KeyError:
         raise ValueError(f"Unsupported illuminant key: {illuminant_key}")
 
-    # Align illuminant to our shape
     illuminant_sd = illuminant_sd.align(shape)
-
-    # We'll use the illuminant's domain for integration
     domain = illuminant_sd.domain
 
-    # ---- Observer angle → which CIE observer table to use ----
+    # ---- Observer angle ----
     angle = float(observer_angle_deg)
     if angle in (0.0, 2.0, 5.0):
         observer_label = "CIE 1931 2 Degree Standard Observer"
     elif angle == 10.0:
         observer_label = "CIE 1964 10 Degree Standard Observer"
     else:
-        raise ValueError(
-            f"Unsupported observer angle: {angle}°. Use 0, 2, 5, or 10 degrees."
-        )
+        raise ValueError(f"Unsupported observer angle: {angle}deg")
 
     try:
         whitepoint = colour.CCS_ILLUMINANTS[observer_label][illuminant_key]
     except KeyError:
-        raise ValueError(
-            f"No whitepoint defined for observer '{observer_label}' and "
-            f"illuminant '{illuminant_key}'."
-        )
+        raise ValueError(f"No whitepoint defined for observer '{observer_label}'")
+
+    # ---- Normalization Factor (Fixes L* scale) ----
+    perfect_white_sd = illuminant_sd.copy()
+    perfect_white_sd.values = illuminant_sd.values * 1.0 
+    XYZ_perfect = colour.sd_to_XYZ(perfect_white_sd, illuminant=illuminant_sd)
+    Y_max = XYZ_perfect[1] 
 
     # ---- Helper: compute XYZ / Lab for a single well ----
     def compute_xyz_lab_for_well(well_name: str):
         absorbance = df[well_name].values.astype(float)
-        # Convert absorbance to transmittance: T = 10^(-A)
-        # Handle potential negatives (noise) or super high values
+        
+        # Transmittance T = 10^(-A)
         transmittance = 10 ** (-absorbance)
 
-        # Interpolate transmittance onto the illuminant domain if needed
-        if len(transmittance) != len(domain) or not np.allclose(
-            wavelengths, domain
-        ):
-            # simple linear interpolation
+        # Interpolation
+        if len(transmittance) != len(domain) or not np.allclose(wavelengths, domain):
             trans_interp = np.interp(domain, wavelengths, transmittance)
         else:
             trans_interp = transmittance
 
-        # Build sample spectral distribution under the illuminant
+        # Spectral Distribution
         sample_sd = colour.SpectralDistribution(
             data=illuminant_sd.values * trans_interp,
             domain=domain,
         )
 
-        XYZ = colour.sd_to_XYZ(sample_sd, illuminant=illuminant_sd)
-        Lab = colour.XYZ_to_Lab(XYZ, whitepoint)
+        # 1. Get Raw XYZ
+        XYZ_raw = colour.sd_to_XYZ(sample_sd, illuminant=illuminant_sd)
+        
+        # 2. Normalize XYZ to 0-1 scale (Critical fix for correct Lab conversion)
+        # Previous bug: multiplying by 100 here caused L* to go > 100
+        XYZ_0_1 = XYZ_raw / Y_max 
 
-        return XYZ, Lab
+        # 3. Convert to Lab (Library expects 0-1 input)
+        Lab = colour.XYZ_to_Lab(XYZ_0_1, whitepoint)
+
+        # 4. Scale XYZ up to 0-100 just for display/CSV readability
+        XYZ_display = XYZ_0_1 * 100.0
+
+        return XYZ_display, Lab
 
     # ---- Compute colors for all wells ----
     results = []
-    lab_by_well = {}
+
+    # The fixed L*a*b* target is now the reference point
+    ref_Lab_fixed = np.array(lab_target) 
+    
+    # We name the column based on the target selected
+    delta_col = f"DeltaE_vs_Target"
 
     for well in available_wells:
         XYZ, Lab = compute_xyz_lab_for_well(well)
-        lab_by_well[well] = Lab
-
-        row = {
+        
+        # Delta E is always calculated against the FIXED user-defined target
+        delta_e = float(colour.delta_E(ref_Lab_fixed, Lab, method="CIE 2000"))
+        
+        results.append({
             "Well": well,
-            "X": float(XYZ[0]),
-            "Y": float(XYZ[1]),
-            "Z": float(XYZ[2]),
-            "L*": float(Lab[0]),
-            "a*": float(Lab[1]),
-            "b*": float(Lab[2]),
-        }
-
-        results.append(row)
-
-    # ---- Compute ΔE2000 vs reference well ----
-    ref_Lab = lab_by_well[reference_well]
-    delta_col = f"DeltaE_vs_{reference_well}"  # always ΔE2000 underneath
-
-    for row in results:
-        Lab = lab_by_well[row["Well"]]
-        row[delta_col] = float(colour.delta_E(ref_Lab, Lab, method="CIE 2000"))
+            "X": float(XYZ[0]), "Y": float(XYZ[1]), "Z": float(XYZ[2]),
+            "L*": float(Lab[0]), "a*": float(Lab[1]), "b*": float(Lab[2]),
+            delta_col: delta_e, 
+        })
 
     df_results = pd.DataFrame(results)
-    return df_results, available_wells, reference_well
+    
+    return df_results, available_wells, reference_well, valid_blanks
 
-
+# Fixed L*a*b* Presets for Reference Point (Delta E = 0)
+LAB_PRESETS = {
+    "Buffer": (100.0, 0.0, 0.0),      # Perfect White/Clear (L*=100, a*=0, b*=0)
+    "WhiteTile": (95.0, -1.0, 1.0),   # Typical slightly bluish commercial white reference tile
+    "Black": (0.0, 0.0, 0.0),         # Perfect Black
+}
+# =====================================================
 # --------------------------------
 # Per-well spectrum extractor (single)
 # --------------------------------
