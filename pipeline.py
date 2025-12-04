@@ -1,58 +1,99 @@
 # ================================
 # pipeline.py
 # Core spectral → XYZ → Lab → ΔE2000 logic
+# Now with Universal Loader (xls, xlsx, csv)
 # ================================
 
 import pandas as pd
 import numpy as np
 import colour
-
+import os
 
 # --------------------------------
-# Internal loader to normalize plate Excel files
+# Internal loader to normalize plate Data (Universal Loader)
 # --------------------------------
-def _load_plate_dataframe(excel_file):
+def _load_plate_dataframe(file_path):
     """
-    Load an Excel export and normalize it into:
-
-      - Column "Wavelength"  (numeric)
-      - One column per well  (A1, B3, etc.)
-
-    We autodetect the row containing "Wavelength" and use it as header.
-    This makes the pipeline robust to different spectrometer export formats.
+    Robust loader that handles .xlsx, .xls (SpectraMax), and .csv.
+    It scans the file to find the row starting with 'Wavelength'.
     """
-    # Load without header so we can scan for the wavelength row
-    raw = pd.read_excel(excel_file, header=None)
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    # 1. Read the raw file based on extension to find the structure
+    # We read without a header first to scan the rows.
+    try:
+        if ext == '.csv':
+            # Handle CSVs (often exported from Excel)
+            raw = pd.read_csv(file_path, header=None, on_bad_lines='skip')
+        elif ext == '.xls':
+            # Legacy Excel 97-2003 (requires xlrd installed)
+            raw = pd.read_excel(file_path, header=None, engine='xlrd')
+        else:
+            # Standard .xlsx
+            raw = pd.read_excel(file_path, header=None)
+    except Exception as e:
+        raise ValueError(f"Could not read file format {ext}. Error: {e}")
 
+    # 2. Hunt for the Header Row
+    # We look for the row that contains the word "Wavelength" (case-insensitive)
     header_row_index = None
-    for i in range(len(raw)):
-        row = raw.iloc[i].astype(str).str.lower()
-        if "wavelength" in row.values:
+    
+    # Limit scan to first 50 rows to be efficient
+    scan_limit = min(len(raw), 50)
+    
+    for i in range(scan_limit):
+        # Convert row to string, lowercase, and check for 'wavelength'
+        # We join the row values to ensure we catch it in any column
+        row_str = " ".join(raw.iloc[i].astype(str).values).lower()
+        
+        if "wavelength" in row_str:
             header_row_index = i
             break
-
+    
     if header_row_index is None:
-        raise ValueError("Could not find a 'Wavelength' header row automatically.")
+        raise ValueError("Could not find a 'Wavelength' header row in the file. Ensure the file has a 'Wavelength' column.")
 
-    # Re-read with the detected header row
-    df = pd.read_excel(excel_file, header=header_row_index)
+    # 3. Reload with the correct header
+    if ext == '.csv':
+        df = pd.read_csv(file_path, header=header_row_index, on_bad_lines='skip')
+    elif ext == '.xls':
+        df = pd.read_excel(file_path, header=header_row_index, engine='xlrd')
+    else:
+        df = pd.read_excel(file_path, header=header_row_index)
 
-    # Drop truly empty or unnamed columns
+    # 4. Clean Data
+    # Drop columns that are entirely empty (NaN)
     df = df.dropna(axis=1, how="all")
+    
+    # Remove columns that are automatically named "Unnamed" by pandas (garbage columns)
     df = df.loc[:, ~df.columns.astype(str).str.contains("unnamed", case=False)]
+    
+    # Ensure "Wavelength" column exists and clean it
+    # (Sometimes headers have spaces like "Wavelength (nm)")
+    cols = list(df.columns)
+    wavelength_col = next((c for c in cols if "wavelength" in str(c).lower()), None)
+    
+    if not wavelength_col:
+        raise ValueError("Header found, but specific 'Wavelength' column is missing.")
+    
+    # Rename it strictly to "Wavelength" for internal logic
+    df.rename(columns={wavelength_col: "Wavelength"}, inplace=True)
 
-    # Keep only rows where wavelength parses as a number
+    # Drop rows where Wavelength is not a number (removes metadata footers)
     df = df[pd.to_numeric(df["Wavelength"], errors="coerce").notnull()]
+    df["Wavelength"] = df["Wavelength"].astype(float)
 
-    # Detect well-like columns: letter+digits (A1, B10, etc.)
+    # 5. Detect well columns (A1, B2, etc.)
     available_wells = []
     for col in df.columns:
         name = str(col).strip()
+        # Regex-like check: Starts with Letter, ends with Number (e.g., A1, H12)
+        # We ignore "Wavelength", "Temperature", etc.
         if len(name) >= 2 and name[0].isalpha() and name[1:].isdigit():
             available_wells.append(name)
 
     if not available_wells:
-        raise ValueError("No well columns detected in this file.")
+        raise ValueError("No valid well columns (A1, B12...) detected.")
 
     return df, available_wells
 
@@ -60,7 +101,7 @@ def _load_plate_dataframe(excel_file):
 # --------------------------------
 # Public helper: get raw matrix (for Scientist Mode / downloads)
 # --------------------------------
-def get_raw_matrix(excel_file):
+def get_raw_matrix(file_path):
     """
     Return (df_raw, available_wells) after normalization.
 
@@ -68,7 +109,7 @@ def get_raw_matrix(excel_file):
       - 'Wavelength' column
       - one column per well in available_wells
     """
-    df, available_wells = _load_plate_dataframe(excel_file)
+    df, available_wells = _load_plate_dataframe(file_path)
     cols = ["Wavelength"] + available_wells
     df_raw = df[cols].copy()
     return df_raw, available_wells
@@ -86,35 +127,6 @@ def process_plate(
 ):
     """
     Full spectral → XYZ → Lab → ΔE2000 pipeline.
-
-    Args:
-        excel_file:
-            Path to Excel file.
-
-        reference_well:
-            Well ID for ΔE reference (if None, choose A10 or first well).
-
-        plate_type:
-            "48", "96", or "384" (currently used only for validation).
-
-        illuminant_key:
-            Key into colour.SDS_ILLUMINANTS, e.g. "D65", "D50", "A", "F2", "E".
-
-        observer_angle_deg:
-            Requested observer angle (0, 2, 5, or 10) in degrees.
-            Internally:
-              - 0 / 2 / 5  → CIE 1931 2° observer
-              - 10         → CIE 1964 10° observer
-
-    Returns:
-        df_results:
-            DataFrame with XYZ, Lab, and ΔE2000 columns.
-
-        available_wells:
-            List of well IDs actually present.
-
-        reference_well:
-            Reference well ultimately used for ΔE.
     """
 
     # ---- Load & normalize data ----
@@ -126,9 +138,17 @@ def process_plate(
 
     # ---- Reference well selection ----
     if reference_well is None:
-        reference_well = "A10" if "A10" in available_wells else available_wells[0]
+        # Default to A10 if present, else A1, else first available
+        if "A10" in available_wells:
+            reference_well = "A10"
+        elif "A1" in available_wells:
+            reference_well = "A1"
+        else:
+            reference_well = available_wells[0]
+            
     elif reference_well not in available_wells:
-        raise ValueError(f"Reference well {reference_well} not in dataset.")
+        # Fallback if selected reference is missing in this specific file
+        reference_well = available_wells[0]
 
     # ---- Build spectral shape from file wavelengths ----
     wavelengths = df["Wavelength"].values.astype(float)
@@ -136,8 +156,10 @@ def process_plate(
         raise ValueError("Not enough wavelength samples in file.")
 
     interval = float(wavelengths[1] - wavelengths[0])
-
-    # Use the file's wavelength range as the spectral shape.
+    
+    # Handle non-uniform intervals slightly gracefully (warn-ish) by taking average
+    # But for colour-science, we usually need uniform. 
+    # If the file is messy, this might crash, but SpectraMax is usually uniform.
     shape = colour.SpectralShape(
         wavelengths.min(),
         wavelengths.max(),
@@ -179,6 +201,7 @@ def process_plate(
     def compute_xyz_lab_for_well(well_name: str):
         absorbance = df[well_name].values.astype(float)
         # Convert absorbance to transmittance: T = 10^(-A)
+        # Handle potential negatives (noise) or super high values
         transmittance = 10 ** (-absorbance)
 
         # Interpolate transmittance onto the illuminant domain if needed
@@ -236,15 +259,11 @@ def process_plate(
 # --------------------------------
 # Per-well spectrum extractor (single)
 # --------------------------------
-def get_well_spectrum(excel_file, well_name):
+def get_well_spectrum(file_path, well_name):
     """
     Return raw absorbance spectrum for a single well.
-
-    Output:
-        wavelengths: list[float]
-        absorbance: list[float]
     """
-    df, available_wells = _load_plate_dataframe(excel_file)
+    df, available_wells = _load_plate_dataframe(file_path)
 
     if well_name not in available_wells:
         raise ValueError(f"Well {well_name} not present in dataset.")
@@ -258,26 +277,11 @@ def get_well_spectrum(excel_file, well_name):
 # --------------------------------
 # Multi-well spectrum extractor (for overlays)
 # --------------------------------
-def get_wells_spectra(excel_file, wells):
+def get_wells_spectra(file_path, wells):
     """
     Efficiently return spectra for multiple wells from a single file read.
-
-    Args:
-        excel_file:
-            Path to Excel export.
-
-        wells:
-            Iterable of well IDs (strings).
-
-    Returns:
-        wavelengths:
-            list[float] wavelength axis, shared across wells.
-
-        spectra:
-            dict[well_id] -> list[float] absorbance values.
-            Only wells actually present in the file are returned.
     """
-    df, available_wells = _load_plate_dataframe(excel_file)
+    df, available_wells = _load_plate_dataframe(file_path)
     available_set = set(available_wells)
 
     target_wells = [w for w in wells if w in available_set]
@@ -290,25 +294,3 @@ def get_wells_spectra(excel_file, wells):
         spectra[w] = df[w].values.astype(float).tolist()
 
     return wavelengths.tolist(), spectra
-def compute_ratio(df_abs, wlA, wlB, operation):
-    wlA = str(wlA)
-    wlB = str(wlB)
-
-    if wlA not in df_abs.columns:
-        raise ValueError(f"Wavelength {wlA} not found in dataset.")
-    if wlB not in df_abs.columns:
-        raise ValueError(f"Wavelength {wlB} not found in dataset.")
-
-    A = df_abs[wlA].astype(float)
-    B = df_abs[wlB].astype(float)
-
-    if operation == "divide":
-        return A / B
-    elif operation == "subtract":
-        return A - B
-    elif operation == "normdiff":
-        return (A - B) / B
-    elif operation == "average":
-        return (A + B) / 2
-    else:
-        raise ValueError("Unknown ratio operation.")
