@@ -224,7 +224,6 @@
       background: var(--table-header-dark);
       color: #e5e7eb;
     }
-    /* Dark mode row + cell background fix */
     html[data-theme="dark"] #results-table table {
       background: #0b1120 !important;
     }
@@ -349,6 +348,7 @@
         <li><button class="nav-link" data-page="spectral" {% if not table_html %}disabled{% endif %}>📈 Spectral Curves</button></li>
         <li><button class="nav-link" data-page="ratios" {% if not table_html %}disabled{% endif %}>📐 Ratios</button></li>
         <li><button class="nav-link" data-page="scientist" {% if not raw_matrix_html %}disabled{% endif %}>🧪 Scientist Mode</button></li>
+        <li><button class="nav-link" data-page="validate">🧩 Validate Math</button></li>
         <li><button class="nav-link" data-page="about">❓ Help</button></li>
       </ul>
     </div>
@@ -380,7 +380,7 @@
         <h5 class="card-title">Upload dataset</h5>
         <p class="card-subtitle">Supports 48-well, 96-well and 384-well absorbance spectra (.xlsx, .xls, .csv).</p>
 
-        <form id="upload-form" method="post" enctype="multipart/form-data">
+        <form id="upload-form" method="post" action="/" enctype="multipart/form-data">
           <div class="row g-3 mt-2">
             <div class="col-lg-7">
               <div id="upload-dropzone" class="upload-dropzone">
@@ -388,7 +388,11 @@
                 <div class="fw-semibold">Drag &amp; drop Excel here</div>
                 <div class="text-muted small">or click to browse (.xlsx, .xls, .csv)</div>
               </div>
-              <input id="dataset" name="dataset" type="file" accept=".xlsx, .xls, .csv" class="d-none" />
+
+              <input id="dataset" name="dataset" type="file"
+                     accept=".xlsx,.xls,.csv"
+                     class="d-none" required />
+
               <div id="upload-status" class="small mt-2 text-muted">
                 {% if uploaded_filename %}
                   Uploaded: {{ uploaded_filename }}
@@ -419,15 +423,50 @@
                 <option value="10" {% if observer_angle=='10' %}selected{% endif %}>10° (CIE 1964)</option>
               </select>
 
-              <!-- NEW: BLANK WELL SELECTOR (FOR NOISE SUBTRACTION) -->
+              <!-- BLANK WELL MULTI-SELECT + HIDDEN INPUT -->
               <label class="small fw-bold mt-3">Blank/Background Well(s)</label>
-              <input type="text" name="blank_wells" class="form-control form-control-sm mb-2" 
-                     value="{{ blank_input or '' }}" placeholder="e.g. A1, A2">
+              <select id="blank_wells_select_upload"
+                      class="form-select form-select-sm mb-1"
+                      multiple>
+                {% for r in plate_rows %}
+                  {% for c in plate_cols %}
+                    {% set w = r ~ c %}
+                    <option value="{{ w }}" {% if blank_input and w in blank_input %}selected{% endif %}>{{ w }}</option>
+                  {% endfor %}
+                {% endfor %}
+              </select>
+              <input type="hidden"
+                     id="blank_wells_input_upload"
+                     name="blank_wells"
+                     value="{{ blank_input or '' }}">
               <div class="form-text mb-3" style="font-size: 0.75rem;">
-                  Absorbance noise subtraction (use wells with only buffer/solvent).
+                Absorbance noise subtraction (use wells with only buffer/solvent).
               </div>
-              
-              <!-- NEW: FIXED REFERENCE COLOR TARGET -->
+
+              <!-- ΔE MODE + REFERENCE WELL DROPDOWN -->
+              <label class="small fw-bold mt-3">ΔE Mode</label>
+              <select id="reference_mode" name="reference_mode" class="form-select form-select-sm">
+                <option value="lab" {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
+                <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
+              </select>
+
+              <label class="small fw-bold mt-3">Reference Well (for ΔE vs Well)</label>
+              <select id="reference_well_select_upload"
+                      name="reference_well"
+                      class="form-select form-select-sm">
+                <option value="">(auto-select first well)</option>
+                {% for r in plate_rows %}
+                  {% for c in plate_cols %}
+                    {% set w = r ~ c %}
+                    <option value="{{ w }}" {% if reference_well==w %}selected{% endif %}>{{ w }}</option>
+                  {% endfor %}
+                {% endfor %}
+              </select>
+              <div class="form-text mb-2" style="font-size: 0.75rem;">
+                Used when “ΔE vs Reference Well” is selected.
+              </div>
+
+              <!-- FIXED REFERENCE COLOR TARGET -->
               <label class="small fw-bold mt-3">ΔE Zero Point Target</label>
               <select id="ref_target_preset" name="ref_target_preset" class="form-select form-select-sm mb-2">
                   <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
@@ -444,7 +483,7 @@
             </div>
           </div>
 
-          <button class="btn btn-primary mt-3 px-4">Run pipeline</button>
+          <button class="btn btn-primary mt-3 px-4" type="submit">Run pipeline</button>
 
           {% if error %}
           <div class="alert alert-danger mt-3">{{ error }}</div>
@@ -476,19 +515,58 @@
         <div class="col-lg-6">
           <div class="card-elevated h-100">
             <h5 class="card-title">Reference &amp; export</h5>
-            <p class="card-subtitle">ΔE2000 is relative to the <strong>{{ reference_well }}</strong> Target.</p>
+            <p class="card-subtitle">
+              ΔE2000 is relative to
+              <strong>{{ reference_label }}</strong>.
+              <br>
+              <span class="small text-muted">Target: {{ target_display }}</span>
+            </p>
 
             <form id="recalc-form" action="/recalculate" method="post" class="mt-2">
-                
-                <!-- NEW: BLANK WELL SELECTOR (FOR NOISE SUBTRACTION) -->
+
+              <!-- BLANK WELL MULTI-SELECT + HIDDEN INPUT -->
               <label class="small fw-bold">Blank/Background Well(s)</label>
-              <input type="text" name="blank_wells" class="form-control form-control-sm mb-2" 
-                     value="{{ blank_input or '' }}" placeholder="e.g. A1, A2">
-                <div class="form-text" style="font-size: 0.75rem;">
-                    Wells used for Absorbance noise subtraction.
-                </div>
-                
-                <!-- NEW: FIXED REFERENCE COLOR TARGET -->
+              <select id="blank_wells_select_recalc"
+                      class="form-select form-select-sm mb-1"
+                      multiple>
+                {% for r in plate_rows %}
+                  {% for c in plate_cols %}
+                    {% set w = r ~ c %}
+                    <option value="{{ w }}" {% if blank_input and w in blank_input %}selected{% endif %}>{{ w }}</option>
+                  {% endfor %}
+                {% endfor %}
+              </select>
+              <input type="hidden"
+                     id="blank_wells_input_recalc"
+                     name="blank_wells"
+                     value="{{ blank_input or '' }}">
+              <div class="form-text" style="font-size: 0.75rem;">
+                Wells used for Absorbance noise subtraction.
+              </div>
+
+              <!-- ΔE MODE + REFERENCE WELL DROPDOWN (RECALC) -->
+              <label class="small fw-bold mt-3">ΔE Mode</label>
+              <select id="reference_mode_recalc"
+                      name="reference_mode"
+                      class="form-select form-select-sm mb-2">
+                <option value="lab" {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
+                <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
+              </select>
+
+              <label class="small fw-bold mt-2">Reference Well (for ΔE vs Well)</label>
+              <select id="reference_well_select_recalc"
+                      name="reference_well"
+                      class="form-select form-select-sm mb-2">
+                <option value="">(auto-select first well)</option>
+                {% for r in plate_rows %}
+                  {% for c in plate_cols %}
+                    {% set w = r ~ c %}
+                    <option value="{{ w }}" {% if reference_well==w %}selected{% endif %}>{{ w }}</option>
+                  {% endfor %}
+                {% endfor %}
+              </select>
+
+              <!-- FIXED REFERENCE COLOR TARGET (RECALC) -->
               <label class="small fw-bold mt-3">ΔE Zero Point Target</label>
               <select id="ref_target_preset_recalc" name="ref_target_preset" class="form-select form-select-sm mb-2">
                   <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
@@ -502,12 +580,9 @@
                   <div class="col-4"><input type="number" step="0.01" name="custom_a" class="form-control form-control-sm" placeholder="a*" value="{{ custom_a or '' }}"></div>
                   <div class="col-4"><input type="number" step="0.01" name="custom_b" class="form-control form-control-sm" placeholder="b*" value="{{ custom_b or '' }}"></div>
               </div>
-                
-                <p class="small text-muted mt-2 mb-2">Target ΔE is zero at: <strong>{{ target_display }}</strong></p>
-                
+
               <input type="hidden" name="file_token" value="{{ file_token }}" />
               <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename or '' }}" />
-              <input type="hidden" name="reference_well_display" value="{{ ref_target_preset }}" />
               <input type="hidden" id="recalc_plate_type" name="plate_type" value="{{ plate_type }}" />
               <input type="hidden" id="recalc_illuminant_key" name="illuminant_key" value="{{ illuminant_key }}" />
               <input type="hidden" id="recalc_observer_angle" name="observer_angle" value="{{ observer_angle }}" />
@@ -517,14 +592,15 @@
 
             <div class="d-flex gap-2 mt-3">
               <form action="/download_csv" method="post">
-                <input type="hidden" name="data" value="{{ table_html }}" />
-                <button class="btn btn-success btn-sm">Download CSV</button>
-              </form>
+  <input type="hidden" name="data_b64" value="{{ table_html | b64encode }}">
+  <button class="btn btn-success btn-sm">Download CSV</button>
+</form>
 
-              <form action="/download_pdf" method="post">
-                <input type="hidden" name="data" value="{{ table_html }}" />
-                <button class="btn btn-danger btn-sm">Download PDF</button>
-              </form>
+<form action="/download_pdf" method="post">
+  <input type="hidden" name="data_b64" value="{{ table_html | b64encode }}">
+  <button class="btn btn-danger btn-sm">Download PDF</button>
+</form>
+
             </div>
 
           </div>
@@ -547,7 +623,7 @@
     <section id="page-heatmap" class="page-section">
       {% if table_html %}
       <div class="card-elevated">
-        <h5 class="card-title">ΔE heatmap (vs {{ reference_well }} Target)</h5>
+        <h5 class="card-title">ΔE heatmap (vs {{ reference_label }} )</h5>
         <p class="card-subtitle">Dynamic plate layout with clickable wells.</p>
 
         <div class="heatmap-container mt-3">
@@ -569,18 +645,20 @@
       {% if table_html %}
       <div class="card-elevated mb-4">
         <h5 class="card-title">Spectral curves</h5>
-        <p class="card-subtitle">Overlay multiple wells. Use checkboxes for easier selection, including on mobile.</p>
+        <p class="card-subtitle">Overlay multiple wells. Use checkboxes for easier selection.</p>
 
         <div class="row g-3 mt-3">
           <div class="col-md-4">
             <label class="small fw-bold">Select wells</label>
             <div id="spectral-checkbox-list" class="border rounded p-2" style="max-height:260px;overflow:auto;">
-              {% for w in detected_wells %}
-              <div class="form-check small">
-                <input class="form-check-input spectral-well" type="checkbox" value="{{ w }}" id="well_{{ w }}">
-                <label class="form-check-label" for="well_{{ w }}">{{ w }}</label>
-              </div>
-              {% endfor %}
+              {% if detected_wells %}
+                {% for w in detected_wells %}
+                <div class="form-check small">
+                  <input class="form-check-input spectral-well" type="checkbox" value="{{ w }}" id="well_{{ w }}">
+                  <label class="form-check-label" for="well_{{ w }}">{{ w }}</label>
+                </div>
+                {% endfor %}
+              {% endif %}
             </div>
 
             <button id="spectral-plot-btn" class="btn btn-primary btn-sm mt-2">Plot spectra</button>
@@ -647,112 +725,111 @@
       {% endif %}
     </section>
 
-<!-- RATIO PAGE -->
-<section id="page-ratios" class="page-section">
-  {% if table_html %}
-  <div class="card-elevated mb-4">
-    <h5 class="card-title">Wavelength Ratios</h5>
-    <p class="card-subtitle">Compute simple wavelength ratios for every well.</p>
+    <!-- RATIO PAGE -->
+    <section id="page-ratios" class="page-section">
+      {% if table_html %}
+      <div class="card-elevated mb-4">
+        <h5 class="card-title">Wavelength Ratios</h5>
+        <p class="card-subtitle">Compute simple wavelength ratios for every well.</p>
 
-    <form id="ratio-form" class="row g-3 mt-2">
-      <div class="col-md-4">
-        <label class="small fw-bold">Wavelength A</label>
-        <select id="ratio-wl-A" class="form-select form-select-sm">
-          {% for wl in wavelength_list %}
-          <option value="{{ wl }}">{{ wl }} nm</option>
-          {% endfor %}
-        </select>
+        <form id="ratio-form" class="row g-3 mt-2">
+          <div class="col-md-4">
+            <label class="small fw-bold">Wavelength A</label>
+            <select id="ratio-wl-A" class="form-select form-select-sm">
+              {% for wl in wavelength_list %}
+              <option value="{{ wl }}">{{ wl }} nm</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="small fw-bold">Wavelength B</label>
+            <select id="ratio-wl-B" class="form-select form-select-sm">
+              {% for wl in wavelength_list %}
+              <option value="{{ wl }}">{{ wl }} nm</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="small fw-bold">Operation</label>
+            <select id="ratio-operation" class="form-select form-select-sm">
+              <option value="divide">A / B</option>
+              <option value="subtract">A – B</option>
+              <option value="normdiff">(A – B) / B</option>
+              <option value="average">(A + B) / 2</option>
+            </select>
+          </div>
+        </form>
+
+        <button id="ratio-run-btn" class="btn btn-primary btn-sm mt-3">Compute Ratio</button>
+
+        <div id="ratio-result" class="table-responsive mt-4"></div>
       </div>
 
-      <div class="col-md-4">
-        <label class="small fw-bold">Wavelength B</label>
-        <select id="ratio-wl-B" class="form-select form-select-sm">
-          {% for wl in wavelength_list %}
-          <option value="{{ wl }}">{{ wl }} nm</option>
-          {% endfor %}
-        </select>
+      {% else %}
+      <div class="card-elevated">
+        <p class="small">Upload a dataset on the Dashboard to compute ratios.</p>
       </div>
+      {% endif %}
+    </section>
 
-      <div class="col-md-4">
-        <label class="small fw-bold">Operation</label>
-        <select id="ratio-operation" class="form-select form-select-sm">
-          <option value="divide">A / B</option>
-          <option value="subtract">A – B</option>
-          <option value="normdiff">(A – B) / B</option>
-          <option value="average">(A + B) / 2</option>
-        </select>
+    <!-- VALIDATION PAGE -->
+    <section id="page-validate" class="page-section">
+      <div class="card-elevated">
+        <h5 class="card-title">Pipeline Validation</h5>
+        <p class="card-subtitle">Internal XYZ → Lab → ΔE math verification</p>
+
+        <button id="run-validation" class="btn btn-primary btn-sm mt-2">
+          Run Validation
+        </button>
+
+        <div id="validation-result" class="mt-3" style="display:none;">
+          <div id="validation-status" class="fw-bold mb-2"></div>
+          <pre id="validation-details" 
+               style="background:#0f172a20; padding:12px; border-radius:8px; font-size:0.85rem;">
+          </pre>
+        </div>
       </div>
-    </form>
-
-    <button id="ratio-run-btn" class="btn btn-primary btn-sm mt-3">Compute Ratio</button>
-
-    <div id="ratio-result" class="table-responsive mt-4"></div>
-  </div>
-
-  {% else %}
-  <div class="card-elevated">
-    <p class="small">Upload a dataset on the Dashboard to compute ratios.</p>
-  </div>
-  {% endif %}
-</section>
-
+    </section>
 
     <!-- ABOUT -->
     <section id="page-about" class="page-section">
-  <div class="card-elevated">
-    <h5 class="card-title">About</h5>
+      <div class="card-elevated">
+        <h5 class="card-title">About</h5>
 
-    <p class="small mt-2">
-      This tool converts absorbance spectra → XYZ → Lab → ΔE2000 and lets you explore well-to-well differences
-      via a plate heatmap, spectral overlays, and the full raw data matrix.
-    </p>
+        <p class="small mt-2">
+          This tool converts absorbance spectra → XYZ → Lab → ΔE2000 and lets you explore well-to-well differences
+          via a plate heatmap, spectral overlays, and the full raw data matrix.
+        </p>
 
-    <ul class="small mt-3" style="padding-left:18px; line-height:1.45;">
-      <li><strong>Absorbance spectra:</strong> How much light each well absorbs at each wavelength — like a rainbow measured with numbers.</li>
+        <ul class="small mt-3" style="padding-left:18px; line-height:1.45;">
+          <li><strong>Absorbance spectra:</strong> Light absorption per wavelength.</li>
+          <li><strong>XYZ:</strong> Color-space tristimulus values.</li>
+          <li><strong>Lab:</strong> Perceptual color space (L*, a*, b*).</li>
+          <li><strong>ΔE2000:</strong> Numerical difference between colors.</li>
 
-      <li><strong>XYZ:</strong> A color model:
-        <br>• X ≈ red content
-        <br>• Y ≈ green / brightness
-        <br>• Z ≈ blue content
-      </li>
-      <li><strong> Perfect White Tile</strong>: L* = 95, a* = 0, b* = 0</li>
-      <li><strong> Blank/Buffer</strong> : L* = 100, a* = 0, b* = 0</li>
-      <li><strong> Perfect Black</strong> : L* = 0, a* = 0, b* = 0</li>
-      
-        <li><strong>Lab (L*, a*, b*):</strong> A color space based on human vision:
-        <br>• L* = light ↔ dark
-        <br>• a* = red (+) ↔ green (–)
-        <br>• b* = yellow (+) ↔ blue (–)
-      </li>
+          <li><strong>Reference Target:</strong> The ΔE = 0 “anchor” color.</li>
+          <li><strong>Blank Wells:</strong> Background subtraction wells.</li>
+          <li><strong>Plate type:</strong> Choose 48, 96, or 384 wells.</li>
 
-      <li><strong>ΔE2000:</strong> How different two colors are (0 = identical; higher = more different).</li>
+          <li><strong>Illuminant:</strong> Light source model (D65, D50, A, F2, E).</li>
 
-      <li><strong>Reference Target:</strong> The fixed L*a*b* value used as the ΔE = 0 point (e.g., Perfect White).</li>
+          <ul style="margin-top:6px;">
+            <li><strong>D65:</strong> Standard noon daylight</li>
+            <li><strong>D50:</strong> Soft daylight</li>
+            <li><strong>A:</strong> Tungsten light</li>
+            <li><strong>F2:</strong> Fluorescent</li>
+            <li><strong>E:</strong> Equal-energy</li>
+          </ul>
 
-      <li><strong>Blank Wells:</strong> Wells used to subtract background noise (e.g., buffer/solvent).</li>
-
-      <li><strong>Plate type:</strong> Number of wells on the microplate (48, 96, 384).</li>
-
-      <strong>Illuminant:</strong> The assumed light source (daylight / warm light / cool light).
-  <ul style="margin-top:6px;">
-    <li><strong>D65:</strong> Standard noon daylight</li>
-    <li><strong>D50:</strong> Soft afternoon daylight</li>
-    <li><strong>A:</strong> Warm tungsten indoor light</li>
-    <li><strong>F2:</strong> Cool fluorescent light</li>
-    <li><strong>E:</strong> Equal-energy reference light</li>
-  </ul>
-</li>
-      <li><strong>Observer angle:</strong> The viewing geometry of the “virtual eye” (2° or 10°).</li>
-
-      <li><strong>ΔE heatmap:</strong> A colored map showing which wells are similar or different.</li>
-
-      <li><strong>Spectral curves:</strong> Smooth lines showing absorbance vs wavelength.</li>
-
-      <li><strong>Raw data matrix:</strong> The complete table of all original spectrometer values.</li>
-    </ul>
-  </div>
-</section>
-
+          <li><strong>Observer angle:</strong> 2° (standard) or 10° (wide field).</li>
+          <li><strong>Heatmap:</strong> Visual ΔE pattern across the plate.</li>
+          <li><strong>Spectral curves:</strong> Visual absorbance vs wavelength.</li>
+          <li><strong>Raw matrix:</strong> The underlying spectrometer data.</li>
+        </ul>
+      </div>
+    </section>
 
   </main>
 </div>
@@ -784,16 +861,14 @@ function applyTheme(theme) {
   updateChartTheme();
 }
 
-const storedTheme = localStorage.getItem('colour-pipeline-theme');
-applyTheme(storedTheme === 'dark' ? 'dark' : 'light');
+applyTheme(localStorage.getItem('colour-pipeline-theme') === 'dark' ? 'dark' : 'light');
 
 themeToggleBtn.addEventListener('click', () => {
-  const current = htmlEl.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  applyTheme(current);
+  applyTheme(htmlEl.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
 });
 
 /*********************************************************
- NAVIGATION
+ PAGE NAVIGATION
 *********************************************************/
 const navLinks = document.querySelectorAll(".nav-link");
 const pages = {
@@ -802,53 +877,50 @@ const pages = {
   spectral: document.getElementById("page-spectral"),
   ratios: document.getElementById("page-ratios"),
   scientist: document.getElementById("page-scientist"),
+  validate: document.getElementById("page-validate"),
   about: document.getElementById("page-about")
 };
 
 navLinks.forEach(btn => {
-  btn.addEventListener('click', () => {
+  btn.addEventListener("click", () => {
     if (btn.disabled) return;
     navLinks.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     const target = btn.dataset.page;
     Object.entries(pages).forEach(([key, sec]) => {
-      if (!sec) return;
       sec.classList.toggle("active", key === target);
     });
   });
 });
 
 /*********************************************************
- UPLOAD LOGIC + LOADING
+ UPLOAD + LOADING OVERLAY
 *********************************************************/
 const dropzone = document.getElementById("upload-dropzone");
 const fileInput = document.getElementById("dataset");
 const uploadStatus = document.getElementById("upload-status");
 const loadingOverlay = document.getElementById("loading-overlay");
-const uploadForm = document.getElementById("upload-form");
 
-if (dropzone && fileInput) {
+if (dropzone) {
   dropzone.onclick = () => fileInput.click();
 
   dropzone.addEventListener("dragover", e => {
     e.preventDefault();
     dropzone.classList.add("dragover");
   });
-
-  ["dragleave", "dragend", "drop"].forEach(ev => {
+  ["dragleave","dragend","drop"].forEach(ev => {
     dropzone.addEventListener(ev, () => dropzone.classList.remove("dragover"));
   });
-
   dropzone.addEventListener("drop", e => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length) {
       fileInput.files = e.dataTransfer.files;
-      if (uploadStatus) {
-        uploadStatus.textContent = "Uploaded: " + e.dataTransfer.files[0].name;
-      }
+      uploadStatus.textContent = "Uploaded: " + e.dataTransfer.files[0].name;
     }
   });
+}
 
+if (fileInput) {
   fileInput.addEventListener("change", () => {
     if (fileInput.files && fileInput.files.length && uploadStatus) {
       uploadStatus.textContent = "Uploaded: " + fileInput.files[0].name;
@@ -856,59 +928,78 @@ if (dropzone && fileInput) {
   });
 }
 
-if (uploadForm) {
-  uploadForm.addEventListener("submit", () => {
-    if (loadingOverlay) loadingOverlay.classList.add("active");
-  });
-}
+document.getElementById("upload-form")?.addEventListener("submit", () => {
+  loadingOverlay.classList.add("active");
+});
 
 /*********************************************************
- SYNC RECALC FORM
+ BLANK WELL MULTI-SELECT → HIDDEN INPUT
+*********************************************************/
+function syncBlankSelectToInput(selectId, hiddenId) {
+  const sel = document.getElementById(selectId);
+  const hidden = document.getElementById(hiddenId);
+  if (!sel || !hidden) return;
+  const selected = Array.from(sel.selectedOptions).map(o => o.value);
+  hidden.value = selected.join(", ");
+}
+
+document.getElementById("blank_wells_select_upload")?.addEventListener("change", () => {
+  syncBlankSelectToInput("blank_wells_select_upload", "blank_wells_input_upload");
+});
+document.getElementById("blank_wells_select_recalc")?.addEventListener("change", () => {
+  syncBlankSelectToInput("blank_wells_select_recalc", "blank_wells_input_recalc");
+});
+
+// Initialize hidden fields once on load (so server-rendered selections are preserved)
+syncBlankSelectToInput("blank_wells_select_upload", "blank_wells_input_upload");
+syncBlankSelectToInput("blank_wells_select_recalc", "blank_wells_input_recalc");
+
+/*********************************************************
+ SYNC RECALC FORM (plate / illum / observer)
 *********************************************************/
 function syncRecalc() {
   const pt = document.getElementById("plate_type");
   const ill = document.getElementById("illuminant_key");
   const obs = document.getElementById("observer_angle");
+
   const r_pt = document.getElementById("recalc_plate_type");
   const r_ill = document.getElementById("recalc_illuminant_key");
   const r_obs = document.getElementById("recalc_observer_angle");
+
   if (pt && r_pt) r_pt.value = pt.value;
   if (ill && r_ill) r_ill.value = ill.value;
   if (obs && r_obs) r_obs.value = obs.value;
 }
 ["plate_type","illuminant_key","observer_angle"].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener("change", syncRecalc);
+  document.getElementById(id)?.addEventListener("change", syncRecalc);
 });
 syncRecalc();
 
-// NEW JAVASCRIPT FOR TARGET INPUT TOGGLE
+/*********************************************************
+ CUSTOM LAB INPUTS (SHOW/HIDE)
+*********************************************************/
 function toggleCustomLabInputs() {
-    const selector = document.getElementById('ref_target_preset');
-    const customInputs = document.getElementById('custom_lab_inputs');
-    if (selector && customInputs) {
-        customInputs.style.display = selector.value === 'Custom' ? 'flex' : 'none';
-    }
-    
-    const selectorRecalc = document.getElementById('ref_target_preset_recalc');
-    const customInputsRecalc = document.getElementById('custom_lab_inputs_recalc');
-    if (selectorRecalc && customInputsRecalc) {
-        customInputsRecalc.style.display = selectorRecalc.value === 'Custom' ? 'flex' : 'none';
-    }
-    
-    // Update loading message hint based on selection
-    const currentSelector = selectorRecalc || selector;
-    const loadingMessage = document.getElementById('loading-target-message');
-    if (loadingMessage && currentSelector) {
-        loadingMessage.textContent = `Target: ${currentSelector.options[currentSelector.selectedIndex].text.split('(')[0].trim()}`;
-    }
-}
+  const selectMain = document.getElementById("ref_target_preset");
+  const divMain = document.getElementById("custom_lab_inputs");
 
-document.getElementById('ref_target_preset')?.addEventListener('change', toggleCustomLabInputs);
-document.getElementById('ref_target_preset_recalc')?.addEventListener('change', toggleCustomLabInputs);
+  const selectRecalc = document.getElementById("ref_target_preset_recalc");
+  const divRecalc = document.getElementById("custom_lab_inputs_recalc");
+
+  if (divMain && selectMain) divMain.style.display = selectMain.value === "Custom" ? "flex" : "none";
+  if (divRecalc && selectRecalc) divRecalc.style.display = selectRecalc.value === "Custom" ? "flex" : "none";
+
+  const currentSelector = selectRecalc || selectMain;
+  const loadingMessage = document.getElementById('loading-target-message');
+  if (loadingMessage && currentSelector) {
+    loadingMessage.textContent = `Target: ${currentSelector.options[currentSelector.selectedIndex].text.split('(')[0].trim()}`;
+  }
+}
+toggleCustomLabInputs();
+document.getElementById("ref_target_preset")?.addEventListener("change", toggleCustomLabInputs);
+document.getElementById("ref_target_preset_recalc")?.addEventListener("change", toggleCustomLabInputs);
 
 /*********************************************************
- HEATMAP BUILDER (ΔE2000)
+ HEATMAP BUILDER
 *********************************************************/
 function buildHeatmap() {
   const grid = document.getElementById("heatmap-grid");
@@ -917,79 +1008,61 @@ function buildHeatmap() {
   const table = document.querySelector("#results-table table");
   if (!table) return;
 
-  const headerCells = [...table.querySelector("thead").querySelectorAll("th")];
-  const bodyRows = [...table.querySelector("tbody").querySelectorAll("tr")];
+  const headCells = [...table.querySelector("thead").querySelectorAll("th")];
+  const rows = [...table.querySelector("tbody").querySelectorAll("tr")];
 
-  const wellIdx = headerCells.findIndex(th => th.textContent.trim().toLowerCase() === "well");
-  const deltaIdx = headerCells.findIndex(th => th.textContent.trim().toLowerCase().startsWith("deltae"));
-  if (wellIdx === -1 || deltaIdx === -1) return;
+  const idxWell = headCells.findIndex(c => c.textContent.trim().toLowerCase() === "well");
+  const idxDelta = headCells.findIndex(c => c.textContent.trim().toLowerCase().startsWith("deltae"));
+
+  if (idxWell === -1 || idxDelta === -1) return;
 
   const deltaMap = {};
-  bodyRows.forEach(row => {
-    const cells = row.querySelectorAll("td");
+  rows.forEach(r => {
+    const cells = r.querySelectorAll("td");
     if (!cells.length) return;
-    const w = cells[wellIdx].textContent.trim();
-    const d = parseFloat(cells[deltaIdx].textContent.trim());
+    const w = cells[idxWell].textContent.trim();
+    const d = parseFloat(cells[idxDelta].textContent.trim());
     if (!isNaN(d)) deltaMap[w] = d;
   });
 
   const plateType = "{{ plate_type }}";
-  let rows = [], cols = [];
+  let rowLabels = [], colLabels = [];
 
   if (plateType === "48") {
-    rows = "ABCDEF".split("");
-    cols = [...Array(8).keys()].map(i => i + 1);
-    grid.style.gridTemplateColumns = "40px repeat(8,1fr)";
+    rowLabels = "ABCDEF".split("");
+    colLabels = [...Array(8)].map((_,i)=>i+1);
   } else if (plateType === "384") {
-    rows = "ABCDEFGHIJKLMNOP".split("");
-    cols = [...Array(24).keys()].map(i => i + 1);
-    grid.style.gridTemplateColumns = "40px repeat(24,1fr)";
+    rowLabels = "ABCDEFGHIJKLMNOP".split("");
+    colLabels = [...Array(24)].map((_,i)=>i+1);
   } else {
-    rows = "ABCDEFGH".split("");
-    cols = [...Array(12).keys()].map(i => i + 1);
-    grid.style.gridTemplateColumns = "40px repeat(12,1fr)";
+    rowLabels = "ABCDEFGH".split("");
+    colLabels = [...Array(12)].map((_,i)=>i+1);
   }
 
+  grid.style.gridTemplateColumns = `40px repeat(${colLabels.length},1fr)`;
   grid.innerHTML = "";
-  const corner = document.createElement("div");
-  corner.className = "heatmap-cell fw-semibold";
-  grid.appendChild(corner);
 
-  cols.forEach(c => {
-    const h = document.createElement("div");
-    h.className = "heatmap-cell fw-semibold";
-    h.textContent = c;
-    grid.appendChild(h);
-  });
+  grid.innerHTML += `<div class="heatmap-cell fw-semibold"></div>`;
+  colLabels.forEach(c => grid.innerHTML += `<div class="heatmap-cell fw-semibold">${c}</div>`);
 
-  rows.forEach(r => {
-    const label = document.createElement("div");
-    label.className = "heatmap-cell fw-semibold";
-    label.textContent = r;
-    grid.appendChild(label);
-
-    cols.forEach(c => {
+  rowLabels.forEach(r => {
+    grid.innerHTML += `<div class="heatmap-cell fw-semibold">${r}</div>`;
+    colLabels.forEach(c => {
       const well = `${r}${c}`;
+      const d = deltaMap[well];
       const cell = document.createElement("div");
       cell.className = "heatmap-cell";
-      const d = deltaMap[well];
-
       if (d != null) {
         cell.classList.add("filled");
         cell.dataset.delta = d;
         cell.textContent = d.toFixed(1);
-
-        cell.addEventListener("click", () => {
+        cell.onclick = () => {
           document.querySelector('[data-page="spectral"]').click();
           const cb = document.getElementById("well_" + well);
-          if (cb) {
-            cb.checked = true;
-            plotSpectra();
-          }
-        });
-      } else {
-        cell.textContent = "–";
-      }
+          if (cb) cb.checked = true;
+          plotSpectra();
+        };
+      } else cell.textContent = "–";
       grid.appendChild(cell);
     });
   });
@@ -1001,8 +1074,9 @@ function colorHeatmap() {
   const cells = document.querySelectorAll(".heatmap-cell.filled");
   if (!cells.length) return;
 
-  let min = Math.min(...[...cells].map(c => parseFloat(c.dataset.delta)));
-  let max = Math.max(...[...cells].map(c => parseFloat(c.dataset.delta)));
+  const vals = [...cells].map(c => parseFloat(c.dataset.delta));
+  let min = Math.min(...vals);
+  let max = Math.max(...vals);
   if (max === min) max = min + 0.001;
 
   const theme = htmlEl.getAttribute("data-theme");
@@ -1011,68 +1085,68 @@ function colorHeatmap() {
     const v = parseFloat(c.dataset.delta);
     const t = (v - min) / (max - min);
     const hue = 220 - 220 * t;
-    const saturation = theme === "dark" ? 75 : 85;
+    const sat = theme === "dark" ? 75 : 85;
     const light = theme === "dark"
       ? 35 + 20 * (1 - Math.abs(t - 0.5))
       : 88 - 26 * (1 - Math.abs(t - 0.5));
 
-    c.style.background = `hsl(${hue},${saturation}%,${light}%)`;
+    c.style.background = `hsl(${hue},${sat}%,${light}%)`;
     c.style.color = light < 55 ? "#f9fafb" : "#020617";
   });
 }
-
 buildHeatmap();
 
 /*********************************************************
  SPECTRAL CHART
 *********************************************************/
-function pastelColor(i) {
-  const pastel = [
-    "#60a5fa","#f472b6","#34d399","#fcd34d","#a78bfa",
-    "#f87171","#4ade80","#38bdf8","#fbbf24"
+function pastelColor(i){
+  const colors = [
+    "#60a5fa","#f472b6","#34d399","#fcd34d",
+    "#a78bfa","#f87171","#4ade80","#38bdf8","#fbbf24"
   ];
-  return pastel[i % pastel.length];
+  return colors[i % colors.length];
 }
 
-function drawSpectralChart(series, wavelengths) {
+function drawSpectralChart(series,wavelengths){
   const canvas = document.getElementById("spectral-chart");
   if (!canvas) return;
+
   const ctx = canvas.getContext("2d");
   if (spectralChart) spectralChart.destroy();
 
-  const theme = htmlEl.getAttribute('data-theme');
-  const textColor = theme === 'dark' ? '#e5e7eb' : '#0f172a';
-  const gridColor = theme === 'dark'
-      ? 'rgba(148,163,184,0.35)'
-      : 'rgba(148,163,184,0.50)';
+  const theme = htmlEl.getAttribute("data-theme");
+  const textColor = theme==="dark" ? "#e5e7eb" : "#0f172a";
+  const gridColor = theme==="dark"
+      ? "rgba(148,163,184,0.35)"
+      : "rgba(148,163,184,0.50)";
 
-  spectralChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: wavelengths,
-      datasets: series.map((s, i) => ({
-        label: s.label,
-        data: s.values,
-        borderColor: s.color || pastelColor(i),
-        tension: 0.2,
-        pointRadius: 0,
-        pointHitRadius: 8,
-        fill: false
+  spectralChart = new Chart(ctx,{
+    type:"line",
+    data:{
+      labels:wavelengths,
+      datasets:series.map((s,i)=>({
+        label:s.label,
+        data:s.values,
+        borderColor:s.color || pastelColor(i),
+        tension:0.2,
+        pointRadius:0,
+        pointHitRadius:8,
+        fill:false
       }))
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
       interaction: {
         mode: 'index',
         intersect: false
       },
-      plugins: {
-        legend: {
-          labels: { color: textColor, font: { size: 11 } }
+      plugins:{
+        legend:{
+          labels:{color:textColor, font:{size:11}}
         },
-        tooltip: {
-          callbacks: {
+        tooltip:{
+          callbacks:{
             label: ctx => {
               const y = ctx.parsed.y;
               if (y == null || isNaN(y)) return '';
@@ -1081,16 +1155,16 @@ function drawSpectralChart(series, wavelengths) {
           }
         }
       },
-      scales: {
-        x: {
-          title: { display: true, text: "Wavelength (nm)", color: textColor },
-          ticks: { color: textColor },
-          grid: { color: gridColor }
+      scales:{
+        x:{
+          title:{display:true,text:"Wavelength (nm)",color:textColor},
+          ticks:{color:textColor},
+          grid:{color:gridColor}
         },
-        y: {
-          title: { display: true, text: "Absorbance", color: textColor },
-          ticks: { color: textColor },
-          grid: { color: gridColor }
+        y:{
+          title:{display:true,text:"Absorbance",color:textColor},
+          ticks:{color:textColor},
+          grid:{color:gridColor}
         }
       }
     }
@@ -1119,91 +1193,84 @@ function updateChartTheme() {
 }
 
 /*********************************************************
- LOAD REAL SPECTRA (MULTI-WELL)
+ LOAD + PLOT SPECTRA
 *********************************************************/
-async function plotSpectra() {
-  const token = document.getElementById("fileToken")?.value;
-  const statusEl = document.getElementById("spectral-status");
-
-  if (!token) {
-    if (statusEl) statusEl.textContent = "Upload a dataset to view real spectra.";
+async function plotSpectra(){
+  const token=document.getElementById("fileToken")?.value;
+  const statusEl=document.getElementById("spectral-status");
+  if(!token){
+    if(statusEl) statusEl.textContent="Upload a dataset to view spectra.";
     return;
   }
 
-  const wells = [...document.querySelectorAll(".spectral-well")]
-                  .filter(cb => cb.checked)
-                  .map(cb => cb.value);
+  const wells=[...document.querySelectorAll(".spectral-well")]
+      .filter(cb=>cb.checked)
+      .map(cb=>cb.value);
 
-  if (!wells.length) {
-    if (statusEl) statusEl.textContent = "Select at least one well.";
+  if(!wells.length){
+    if(statusEl) statusEl.textContent="Select at least one well.";
     return;
   }
 
-  try {
-    if (statusEl) statusEl.textContent = "Loading spectra…";
+  try{
+    if(statusEl) statusEl.textContent="Loading spectra…";
 
-    const resp = await fetch(
-      `/spectra_multi?token=${encodeURIComponent(token)}&wells=${encodeURIComponent(wells.join(","))}`
-    );
-
-    const data = await resp.json();
+    const resp=await fetch(`/spectra_multi?token=${encodeURIComponent(token)}&wells=${encodeURIComponent(wells.join(","))}`);
+    const data=await resp.json();
 
     if (!resp.ok || !data || !data.wavelengths) {
       if (statusEl) statusEl.textContent = (data && data.error) ? data.error : "Failed to load spectra.";
       return;
     }
 
-    const wavelengths = data.wavelengths;
-    const series = data.spectra.map((s, i) => ({
-      label: s.well,
-      values: s.absorbance,
-      color: pastelColor(i)
+    const wavelengths=data.wavelengths;
+    const series=Object.keys(data.spectra).map((w,i)=>({
+      label:w,
+      values:data.spectra[w],
+      color:pastelColor(i)
     }));
 
-    drawSpectralChart(series, wavelengths);
-
-    if (statusEl) statusEl.textContent = "Showing real spectra for: " + wells.join(", ");
-
-  } catch (err) {
+    drawSpectralChart(series,wavelengths);
+    if(statusEl) statusEl.textContent="Showing spectra for: "+wells.join(", ");
+  } catch(err){
     console.error(err);
-    if (statusEl) statusEl.textContent = "Unexpected error.";
+    if(statusEl) statusEl.textContent="Unexpected error.";
   }
 }
 
 document.getElementById("spectral-plot-btn")?.addEventListener("click", plotSpectra);
 
 /*********************************************************
- FULLSCREEN RAW MATRIX VIEW
+ FULLSCREEN RAW MATRIX
 *********************************************************/
-const fullscreenBtn = document.getElementById("fullscreen-raw-btn");
-const fullscreenModal = document.getElementById("raw-fullscreen-modal");
-const fullscreenContent = document.getElementById("raw-fullscreen-content");
-const fullscreenClose = document.getElementById("raw-fullscreen-close");
+document.getElementById("fullscreen-raw-btn")?.addEventListener("click",()=>{
+  const modal=document.getElementById("raw-fullscreen-modal");
+  const content=document.getElementById("raw-fullscreen-content");
+  const table=document.querySelector("#page-scientist table");
+  if(table){
+    content.innerHTML=table.outerHTML;
+    modal.style.display="block";
+  }
+});
 
-if (fullscreenBtn && fullscreenModal && fullscreenContent && fullscreenClose) {
-  fullscreenBtn.addEventListener("click", () => {
-    const rawTable = document.querySelector("#page-scientist table");
-    if (rawTable) {
-      fullscreenContent.innerHTML = rawTable.outerHTML;
-      fullscreenModal.style.display = "block";
-    }
-  });
+document.getElementById("raw-fullscreen-close")?.addEventListener("click",()=>{
+  document.getElementById("raw-fullscreen-modal").style.display="none";
+});
 
-  fullscreenClose.addEventListener("click", () => {
-    fullscreenModal.style.display = "none";
-  });
+document.getElementById("raw-fullscreen-modal")?.addEventListener("click",e=>{
+  if(e.target===document.getElementById("raw-fullscreen-modal")){
+    document.getElementById("raw-fullscreen-modal").style.display="none";
+  }
+});
 
-  fullscreenModal.addEventListener("click", e => {
-    if (e.target === fullscreenModal) fullscreenModal.style.display = "none";
-  });
-
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape") fullscreenModal.style.display = "none";
-  });
-}
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    document.getElementById("raw-fullscreen-modal").style.display="none";
+  }
+});
 
 /*********************************************************
- CANVAS EXPORT FIX (SOLID BACKGROUND)
+ CANVAS EXPORT HELPERS
 *********************************************************/
 function getCanvasWithBackground(chartCanvas) {
   const theme = htmlEl.getAttribute("data-theme");
@@ -1226,11 +1293,9 @@ function getCanvasWithBackground(chartCanvas) {
 *********************************************************/
 document.getElementById("spectral-download-btn")?.addEventListener("click", () => {
   if (!spectralChart) return;
-
   const canvas = spectralChart.canvas;
   const exportCanvas = getCanvasWithBackground(canvas);
   const url = exportCanvas.toDataURL("image/png");
-
   const a = document.createElement("a");
   a.href = url;
   a.download = "spectral_curves.png";
@@ -1242,7 +1307,6 @@ document.getElementById("spectral-download-btn")?.addEventListener("click", () =
 *********************************************************/
 document.getElementById("spectral-print-btn")?.addEventListener("click", () => {
   if (!spectralChart) return;
-
   const canvas = spectralChart.canvas;
   const exportCanvas = getCanvasWithBackground(canvas);
   const url = exportCanvas.toDataURL("image/png");
@@ -1265,37 +1329,70 @@ document.getElementById("spectral-print-btn")?.addEventListener("click", () => {
       win.print();
     };
   } else {
-    // Fallback: try printing anyway
     win.focus();
     win.print();
   }
 });
-document.getElementById("ratio-run-btn")?.addEventListener("click", async () => {
-  const wlA = document.getElementById("ratio-wl-A").value;
-  const wlB = document.getElementById("ratio-wl-B").value;
-  const op  = document.getElementById("ratio-operation").value;
-  const token = document.getElementById("fileToken").value;
 
-  const formData = new FormData();
-  formData.append("file_token", token);
-  formData.append("wlA", wlA);
-  formData.append("wlB", wlB);
-  formData.append("operation", op);
+/*********************************************************
+ RATIO CALCULATOR
+*********************************************************/
+document.getElementById("ratio-run-btn")?.addEventListener("click",async()=>{
+  const wlA=document.getElementById("ratio-wl-A").value;
+  const wlB=document.getElementById("ratio-wl-B").value;
+  const op=document.getElementById("ratio-operation").value;
+  const token=document.getElementById("fileToken").value;
 
-  const resp = await fetch("/compute_ratio", {
-    method: "POST",
-    body: formData
-  });
+  const fd=new FormData();
+  fd.append("file_token",token);
+  fd.append("wlA",wlA);
+  fd.append("wlB",wlB);
+  fd.append("operation",op);
 
-  const html = await resp.text();
-  document.getElementById("ratio-result").innerHTML = html;
+  const res=await fetch("/compute_ratio",{method:"POST",body:fd});
+  const html=await res.text();
+  document.getElementById("ratio-result").innerHTML=html;
+});
+
+/*********************************************************
+ VALIDATION PAGE
+*********************************************************/
+document.getElementById("run-validation")?.addEventListener("click",async()=>{
+  const btn=document.getElementById("run-validation");
+  btn.disabled=true;
+  btn.textContent="Validating…";
+
+  const res=await fetch("/debug_validate");
+  const data=await res.json();
+
+  const result=document.getElementById("validation-result");
+  const status=document.getElementById("validation-status");
+  const details=document.getElementById("validation-details");
+
+  result.style.display="block";
+
+  if(data.error){
+    status.textContent="❌ Validation Failed";
+    status.style.color="red";
+    details.textContent="Error: "+data.error;
+  } else {
+    status.textContent="✔ Math Validation Passed!";
+    status.style.color="green";
+    details.textContent=
+      `XYZ (raw): ${JSON.stringify(data.XYZ_raw, null, 2)}\n\n`+
+      `XYZ (normalized): ${JSON.stringify(data.XYZ_norm, null, 2)}\n\n`+
+      `Lab: ${JSON.stringify(data.Lab, null, 2)}\n\n`+
+      `ΔE2000 (vs 100,0,0): ${data.deltaE}`;
+  }
+
+  btn.disabled=false;
+  btn.textContent="Run Validation";
 });
 
 /*********************************************************
  FINAL INIT
 *********************************************************/
 updateChartTheme();
-toggleCustomLabInputs(); // <--- Run on load to set initial state
 </script>
 
 </body>
