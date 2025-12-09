@@ -1,14 +1,16 @@
 # ================================
 # app.py
 # Flask front-end for Spectral -> Color -> DeltaE Analyzer
-# With support for: Fixed Lab Target OR Reference Well
+# With support for: Fixed Lab Target OR Reference Well + metadata
 # ================================
 
 import os
 import uuid
 import base64
+
 import pandas as pd
 import numpy as np
+
 from flask import Flask, render_template, request, send_file, jsonify
 
 from bs4 import BeautifulSoup
@@ -28,12 +30,11 @@ from pipeline import (
 
 app = Flask(__name__)
 
-# -------- JINJA FILTER: base64 encode (for table_html -> hidden input) --------
 @app.template_filter("b64encode")
 def b64encode_filter(s):
-    if s is None:
-        return ""
-    return base64.b64encode(s.encode("utf-8")).decode("utf-8")
+  if s is None:
+      return ""
+  return base64.b64encode(s.encode("utf-8")).decode("utf-8")
 
 # Allow uploads up to 50 MB
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
@@ -44,9 +45,9 @@ os.makedirs("results", exist_ok=True)
 
 # Default L*a*b* presets
 LAB_PRESETS = {
-    "Buffer": (100.0, 0.0, 0.0),
+    "Buffer":    (100.0, 0.0, 0.0),
     "WhiteTile": (95.0, -1.0, 1.0),
-    "Black": (0.0, 0.0, 0.0),
+    "Black":     (0.0, 0.0, 0.0),
 }
 
 # --------------------------------
@@ -86,7 +87,7 @@ def compute_missing_wells(detected, plate_type: str):
     return [w for w in full if w not in detected_set]
 
 
-def dataframe_to_html(df):
+def dataframe_to_html(df: pd.DataFrame) -> str:
     return df.to_html(
         classes="table table-sm table-striped table-hover align-middle",
         index=False,
@@ -94,10 +95,90 @@ def dataframe_to_html(df):
         border=0,
     )
 
+
+def safe_str(v):
+    if v is None:
+        return ""
+    if isinstance(v, float) and np.isnan(v):
+        return ""
+    return str(v)
+
+
+def load_metadata_df(file_path: str) -> pd.DataFrame:
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in (".xlsx", ".xls"):
+        df = pd.read_excel(file_path)
+    else:
+        df = pd.read_csv(file_path)
+    if "Well" not in df.columns:
+        raise ValueError("Metadata file must contain a 'Well' column.")
+    return df
+
+
+def build_well_metadata(meta_path: str, source_name: str = None):
+    """
+    Returns (well_metadata_dict, display_name).
+    well_metadata_dict[well] = {
+        Well, Row, Column, Sample, AuNP, Contents, Category, MetadataSource
+    }
+    """
+    if not meta_path or not os.path.exists(meta_path):
+        return None, None
+
+    df = load_metadata_df(meta_path)
+    src_name = source_name or os.path.basename(meta_path)
+
+    well_meta = {}
+    for _, row in df.iterrows():
+        well = safe_str(row.get("Well", "")).strip()
+        if not well:
+            continue
+        well_meta[well] = {
+            "Well": well,
+            "Row": safe_str(row.get("Row", "")),
+            "Column": safe_str(row.get("Column", "")),
+            "Sample": safe_str(row.get("Sample", "")),
+            # support 'AuNP' or older 'Gold Nanoparticle Added'
+            "AuNP": safe_str(
+                row.get("AuNP", row.get("Gold Nanoparticle Added", ""))
+            ),
+            # support 'Contents' or 'Well contents'
+            "Contents": safe_str(
+                row.get("Contents", row.get("Well contents", ""))
+            ),
+            "Category": safe_str(row.get("Category", "")),
+            "MetadataSource": src_name,
+        }
+
+    return well_meta, src_name
+
+
+def find_paths_for_token(token: str):
+    """
+    Returns (data_path, metadata_path) for a given token.
+    Spectra file is saved as: token + ext
+    Metadata file is saved as: token + "_meta" + ext
+    """
+    data_path = None
+    meta_path = None
+    prefix_meta = f"{token}_meta"
+
+    for fname in os.listdir("uploads"):
+        full = os.path.join("uploads", fname)
+        if fname.startswith(prefix_meta):
+            meta_path = full
+        elif fname.startswith(token):
+            # ensure it's not the meta file
+            if not fname.startswith(prefix_meta):
+                data_path = full
+
+    return data_path, meta_path
+
+
 # --------------------------------
 # PDF generation
 # --------------------------------
-def generate_pdf(df, title="Results"):
+def generate_pdf(df: pd.DataFrame, title: str = "Results") -> str:
     filename = f"results/{uuid.uuid4().hex}.pdf"
     doc = SimpleDocTemplate(filename, pagesize=landscape(letter))
     elements = []
@@ -133,6 +214,7 @@ def generate_pdf(df, title="Results"):
     doc.build(elements)
     return filename
 
+
 # =====================================================
 # MAIN ROUTE
 # =====================================================
@@ -149,13 +231,14 @@ def index():
     detected_wells = None
     missing_wells = None
 
-    # "reference_well" = actual well name (for well-mode)
+    # reference_well = actual well name (for well-mode)
     reference_well = None
-    # "reference_label" = what we show in UI ("Buffer", "WhiteTile", or well id)
+    # reference_label = what we show in UI ("Buffer", "WhiteTile", or well id)
     reference_label = "Buffer"
 
     file_token = None
     uploaded_filename = None
+    metadata_filename = None
     wavelength_list = []
 
     blank_input = ""
@@ -171,6 +254,8 @@ def index():
         f"a*={target_lab_default[1]:.2f}, "
         f"b*={target_lab_default[2]:.2f}"
     )
+
+    well_metadata = None
 
     if request.method == "POST":
         # --- basic controls ---
@@ -209,17 +294,20 @@ def index():
             else:
                 error = "Invalid Reference Target Preset selected."
         else:
-            # For well-mode, pipeline doesn't use lab_target (we still pass something)
+            # For well-mode, pipeline doesn't use lab_target (we still pass a dummy)
             lab_target = (100.0, 0.0, 0.0)
 
-        # file
+        # Spectra file
         uploaded = request.files.get("dataset")
 
         if not uploaded or uploaded.filename == "":
-            error = "Please choose a valid file (.xlsx, .xls, .csv)."
+            error = "Please choose a valid spectra file (.xlsx, .xls, .csv)."
 
         if reference_mode == "lab" and lab_target is None and not error:
             error = "L*a*b* Target must be defined."
+
+        # Optional metadata file
+        metadata_file = request.files.get("metadata_file")
 
         if not error and uploaded and uploaded.filename:
             try:
@@ -228,6 +316,18 @@ def index():
                 ext = os.path.splitext(uploaded_filename)[1]
                 filepath = os.path.join("uploads", token + ext)
                 uploaded.save(filepath)
+                file_token = token
+
+                # Save metadata if provided
+                meta_path = None
+                if metadata_file and metadata_file.filename:
+                    meta_ext = os.path.splitext(metadata_file.filename)[1]
+                    meta_path = os.path.join("uploads", f"{token}_meta{meta_ext}")
+                    metadata_file.save(meta_path)
+                    well_metadata, metadata_filename = build_well_metadata(
+                        meta_path,
+                        source_name=metadata_file.filename,
+                    )
 
                 plate_type_norm = normalize_plate_type(plate_type)
 
@@ -242,7 +342,6 @@ def index():
                     reference_mode=reference_mode,
                 )
 
-                file_token = token
                 missing_wells = compute_missing_wells(detected_wells, plate_type_norm)
                 table_html = dataframe_to_html(df_results)
 
@@ -296,10 +395,13 @@ def index():
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
+        well_metadata=well_metadata,
+        metadata_filename=metadata_filename,
     )
 
+
 # =====================================================
-# RECALCULATE (NO UPLOAD REQUIRED)
+# RECALCULATE (NO NEW UPLOAD REQUIRED)
 # =====================================================
 @app.route("/recalculate", methods=["POST"])
 def recalculate():
@@ -321,11 +423,7 @@ def recalculate():
     if not file_token:
         return "Missing file token", 400
 
-    filepath = None
-    for f in os.listdir("uploads"):
-        if f.startswith(file_token):
-            filepath = os.path.join("uploads", f)
-            break
+    filepath, meta_path = find_paths_for_token(file_token)
 
     if not filepath:
         return "Dataset missing on server", 404
@@ -384,6 +482,9 @@ def recalculate():
 
     plate_rows, plate_cols = get_plate_layout(plate_type_norm)
 
+    # Reload metadata (if exists)
+    well_metadata, metadata_filename = build_well_metadata(meta_path) if meta_path else (None, None)
+
     return render_template(
         "index.html",
         table_html=dataframe_to_html(df_results),
@@ -409,71 +510,10 @@ def recalculate():
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
+        well_metadata=well_metadata,
+        metadata_filename=metadata_filename,
     )
 
-# =====================================================
-# DOWNLOAD CSV
-# =====================================================
-@app.route("/download_csv", methods=["POST"])
-def download_csv():
-    data_b64 = request.form.get("data_b64")
-    if not data_b64:
-        return "No data", 400
-
-    try:
-        html = base64.b64decode(data_b64).decode("utf-8")
-    except Exception as e:
-        return f"Base64 decode error: {e}", 400
-
-    soup = BeautifulSoup(html, "html.parser")
-    rows = soup.find_all("tr")
-    if not rows:
-        return "No rows in table", 400
-
-    data = [
-        [col.get_text(strip=True) for col in row.find_all(["th", "td"])]
-        for row in rows
-    ]
-
-    # First row = header
-    df = pd.DataFrame(data[1:], columns=data[0])
-
-    filename = os.path.join("results", f"table_{uuid.uuid4().hex[:8]}.csv")
-    df.to_csv(filename, index=False)
-
-    return send_file(filename, as_attachment=True, download_name="results.csv")
-
-# =====================================================
-# DOWNLOAD PDF
-# =====================================================
-@app.route("/download_pdf", methods=["POST"])
-def download_pdf():
-    data_b64 = request.form.get("data_b64")
-    if not data_b64:
-        return "No data", 400
-
-    try:
-        html = base64.b64decode(data_b64).decode("utf-8")
-    except Exception as e:
-        return f"Base64 decode error: {e}", 400
-
-    soup = BeautifulSoup(html, "html.parser")
-    rows = soup.find_all("tr")
-    if not rows:
-        return "No rows in table", 400
-
-    data = [
-        [col.get_text(strip=True) for col in row.find_all(["th", "td"])]
-        for row in rows
-    ]
-
-    df = pd.DataFrame(data[1:], columns=data[0])
-
-    try:
-        pdf_path = generate_pdf(df, title="Plate Analysis Results")
-        return send_file(pdf_path, as_attachment=True, download_name="results.pdf")
-    except Exception as e:
-        return f"PDF Error: {e}", 500
 
 # =====================================================
 # MULTI-WELL SPECTRA API
@@ -486,20 +526,29 @@ def spectra_multi():
     if not token or not wells_raw:
         return jsonify({"error": "Missing parameters"}), 400
 
-    filepath = None
-    for f in os.listdir("uploads"):
-        if f.startswith(token):
-            filepath = os.path.join("uploads", f)
-            break
-
+    filepath, _ = find_paths_for_token(token)
     if not filepath:
         return jsonify({"error": "Dataset not found"}), 404
 
-    wells = [w.strip() for w in wells_raw.split(",")]
+    wells = [w.strip() for w in wells_raw.split(",") if w.strip()]
 
     try:
         wavelengths, spectra = get_wells_spectra(filepath, wells)
-        return jsonify({"wavelengths": wavelengths, "spectra": spectra})
+
+        # Convert dict → list because JS now expects:
+        # { well: "...", absorbance: [...] }
+        formatted = []
+        for w, arr in spectra.items():
+            formatted.append({
+                "well": w,
+                "absorbance": arr
+            })
+
+        return jsonify({
+            "wavelengths": wavelengths,
+            "spectra": formatted
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -516,12 +565,7 @@ def compute_ratio_route():
     wlB = float(request.form.get("wlB"))
     op = request.form.get("operation")
 
-    filepath = None
-    for f in os.listdir("uploads"):
-        if f.startswith(file_token):
-            filepath = os.path.join("uploads", f)
-            break
-
+    filepath, _ = find_paths_for_token(file_token)
     if not filepath:
         return "Dataset missing on server", 404
 
@@ -548,12 +592,53 @@ def compute_ratio_route():
     df_out = pd.DataFrame({"Well": wells, "Result": result.values}).round(5)
     return dataframe_to_html(df_out)
 
+
+# =====================================================
+# CSV / PDF DOWNLOADS
+# =====================================================
+@app.route("/download_csv", methods=["POST"])
+def download_csv():
+    html = request.form.get("data", "")
+    if not html:
+        return "No data provided", 400
+    # table_html was generated by dataframe_to_html, so this is safe
+    dfs = pd.read_html(html)
+    if not dfs:
+        return "Failed to parse table", 400
+    df = dfs[0]
+    csv_path = f"results/{uuid.uuid4().hex}.csv"
+    df.to_csv(csv_path, index=False)
+    return send_file(
+        csv_path,
+        as_attachment=True,
+        download_name="plate_results.csv",
+        mimetype="text/csv",
+    )
+
+
+@app.route("/download_pdf", methods=["POST"])
+def download_pdf():
+    html = request.form.get("data", "")
+    if not html:
+        return "No data provided", 400
+    dfs = pd.read_html(html)
+    if not dfs:
+        return "Failed to parse table", 400
+    df = dfs[0]
+    pdf_path = generate_pdf(df, title="Plate Results")
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name="plate_results.pdf",
+        mimetype="application/pdf",
+    )
+
+
 # =====================================================
 # DEBUG VALIDATION
 # =====================================================
 @app.route("/debug_validate")
 def debug_validate():
-    import numpy as np
     import colour
 
     try:
@@ -563,15 +648,15 @@ def debug_validate():
         shape = colour.SpectralShape(380, 780, 5)
         illum = colour.SDS_ILLUMINANTS["D65"].copy().align(shape)
 
-        sample_sd = colour.SpectralDistribution(trans, illum.domain)
+        sample_sd = colour.SpectralDistribution(
+            illum.values * trans, illum.domain
+        )
         XYZ = colour.sd_to_XYZ(sample_sd, illuminant=illum)
 
-
-        perfect_trans = np.ones_like(illum.domain, float)
-        perfect_sd    = colour.SpectralDistribution(perfect_trans, illum.domain)
-        XYZ_white     = colour.sd_to_XYZ(perfect_sd, illuminant=illum)
-        Y_max         = max(float(XYZ_white[1]), 1e-8)
-
+        perfect = illum.copy()
+        perfect.values = illum.values
+        XYZ_white = colour.sd_to_XYZ(perfect, illuminant=illum)
+        Y_max = max(float(XYZ_white[1]), 1e-8)
 
         XYZ_norm = XYZ / Y_max
         wp = colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]
@@ -580,13 +665,15 @@ def debug_validate():
         delta_e = float(colour.delta_E([100, 0, 0], Lab, method="CIE 2000"))
 
         return jsonify(
+            status="ok",
             XYZ_raw=XYZ.tolist(),
             XYZ_norm=XYZ_norm.tolist(),
             Lab=Lab.tolist(),
             deltaE=delta_e,
         )
     except Exception as e:
-        return jsonify(error=str(e))
+        return jsonify(status="error", error=str(e))
+
 
 # =====================================================
 # MAIN
