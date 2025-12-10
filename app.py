@@ -1,77 +1,83 @@
 # ================================
 # app.py
-# Flask front-end for Spectral -> Color -> DeltaE Analyzer
-# With support for: Fixed Lab Target OR Reference Well + metadata
+# Spectral → Color → ΔE Analyzer
+# Includes metadata → Category column in CSV/PDF
 # ================================
 
 import os
 import uuid
 import base64
+import tempfile
 
 import pandas as pd
 import numpy as np
 
 from flask import Flask, render_template, request, send_file, jsonify
 
-from bs4 import BeautifulSoup
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+)
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_LEFT
 
-# Import pipeline
+# Pipeline imports
 from pipeline import (
     process_plate,
-    get_well_spectrum,
+    get_well_spectrum,    # kept in case you use it later
     get_wells_spectra,
     get_raw_matrix,
 )
 
+# --------------------------------
+# Flask + basic config
+# --------------------------------
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 
-@app.template_filter("b64encode")
-def b64encode_filter(s):
-  if s is None:
-      return ""
-  return base64.b64encode(s.encode("utf-8")).decode("utf-8")
-
-# Allow uploads up to 50 MB
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
-
-# Ensure runtime folders exist
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("results", exist_ok=True)
 
-# Default L*a*b* presets
+# =======================================
+# Default LAB presets
+# =======================================
 LAB_PRESETS = {
     "Buffer":    (100.0, 0.0, 0.0),
     "WhiteTile": (95.0, -1.0, 1.0),
     "Black":     (0.0, 0.0, 0.0),
 }
 
-# --------------------------------
-# Helpers
-# --------------------------------
+# =======================================
+# Template filters + basic helpers
+# =======================================
+@app.template_filter("b64encode")
+def b64encode_filter(s):
+    if s is None:
+        return ""
+    return base64.b64encode(s.encode("utf-8")).decode("utf-8")
+
+
 def make_token():
     return uuid.uuid4().hex
 
 
-def normalize_plate_type(plate_type: str) -> str:
-    if not plate_type:
+def normalize_plate_type(pt: str) -> str:
+    if not pt:
         return "96"
-    pt = str(plate_type).strip()
+    pt = str(pt).strip()
     if "48" in pt:
         return "48"
-    if "96" in pt:
-        return "96"
     if "384" in pt:
         return "384"
     return "96"
 
 
-def get_plate_layout(plate_type: str):
-    pt = normalize_plate_type(plate_type)
+def get_plate_layout(pt: str):
+    pt = normalize_plate_type(pt)
     if pt == "48":
         return list("ABCDEF"), range(1, 9)
     if pt == "384":
@@ -79,10 +85,10 @@ def get_plate_layout(plate_type: str):
     return list("ABCDEFGH"), range(1, 13)
 
 
-def compute_missing_wells(detected, plate_type: str):
+def compute_missing_wells(detected, pt: str):
     detected = detected or []
     detected_set = set(detected)
-    rows, cols = get_plate_layout(plate_type)
+    rows, cols = get_plate_layout(pt)
     full = [f"{r}{c}" for r in rows for c in cols]
     return [w for w in full if w not in detected_set]
 
@@ -104,20 +110,25 @@ def safe_str(v):
     return str(v)
 
 
-def load_metadata_df(file_path: str) -> pd.DataFrame:
-    ext = os.path.splitext(file_path)[1].lower()
+# =======================================
+# Metadata loader + merger
+# =======================================
+def load_metadata_df(path: str) -> pd.DataFrame:
+    ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xls"):
-        df = pd.read_excel(file_path)
+        df = pd.read_excel(path)
     else:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(path)
+
     if "Well" not in df.columns:
-        raise ValueError("Metadata file must contain a 'Well' column.")
+        raise ValueError("Metadata file must contain column 'Well'.")
     return df
 
 
 def build_well_metadata(meta_path: str, source_name: str = None):
     """
-    Returns (well_metadata_dict, display_name).
+    Returns (well_metadata_dict, source_display_name).
+
     well_metadata_dict[well] = {
         Well, Row, Column, Sample, AuNP, Contents, Category, MetadataSource
     }
@@ -126,101 +137,196 @@ def build_well_metadata(meta_path: str, source_name: str = None):
         return None, None
 
     df = load_metadata_df(meta_path)
-    src_name = source_name or os.path.basename(meta_path)
+    src = source_name or os.path.basename(meta_path)
 
-    well_meta = {}
+    out = {}
     for _, row in df.iterrows():
-        well = safe_str(row.get("Well", "")).strip()
-        if not well:
+        w = safe_str(row.get("Well", "")).strip()
+        if not w:
             continue
-        well_meta[well] = {
-            "Well": well,
+        out[w] = {
+            "Well": w,
             "Row": safe_str(row.get("Row", "")),
             "Column": safe_str(row.get("Column", "")),
             "Sample": safe_str(row.get("Sample", "")),
-            # support 'AuNP' or older 'Gold Nanoparticle Added'
-            "AuNP": safe_str(
-                row.get("AuNP", row.get("Gold Nanoparticle Added", ""))
-            ),
+            # support 'AuNP' or 'Gold Nanoparticle Added'
+            "AuNP": safe_str(row.get("AuNP", row.get("Gold Nanoparticle Added", ""))),
             # support 'Contents' or 'Well contents'
-            "Contents": safe_str(
-                row.get("Contents", row.get("Well contents", ""))
-            ),
+            "Contents": safe_str(row.get("Contents", row.get("Well contents", ""))),
             "Category": safe_str(row.get("Category", "")),
-            "MetadataSource": src_name,
+            "MetadataSource": src,
         }
+    return out, src
 
-    return well_meta, src_name
+
+def merge_results_with_metadata(df_results: pd.DataFrame, well_metadata: dict):
+    """
+    Add ALL metadata fields (Sample, AuNP, Contents, Category, Row, Column, MetadataSource)
+    into the exported dataframe for CSV/PDF.
+    """
+    if not well_metadata:
+        return df_results
+
+    meta_df = pd.DataFrame(well_metadata).T
+
+    cols = ["Well", "Sample", "AuNP", "Contents", "Category", "Row", "Column", "MetadataSource"]
+    existing = [c for c in cols if c in meta_df.columns]
+
+    merged = df_results.merge(meta_df[existing], on="Well", how="left")
+
+    for c in existing:
+        merged[c] = merged[c].fillna("")
+
+    return merged
 
 
+# =======================================
+# File token → file paths
+# =======================================
 def find_paths_for_token(token: str):
     """
-    Returns (data_path, metadata_path) for a given token.
-    Spectra file is saved as: token + ext
-    Metadata file is saved as: token + "_meta" + ext
+    Returns (dataset_path, metadata_path) for a given token.
+    Dataset: token + ext
+    Metadata: token + "_meta" + ext
     """
-    data_path = None
-    meta_path = None
+    dataset = None
+    meta = None
     prefix_meta = f"{token}_meta"
 
     for fname in os.listdir("uploads"):
         full = os.path.join("uploads", fname)
         if fname.startswith(prefix_meta):
-            meta_path = full
-        elif fname.startswith(token):
-            # ensure it's not the meta file
-            if not fname.startswith(prefix_meta):
-                data_path = full
+            meta = full
+        elif fname.startswith(token) and not fname.startswith(prefix_meta):
+            dataset = full
 
-    return data_path, meta_path
+    return dataset, meta
 
 
-# --------------------------------
-# PDF generation
-# --------------------------------
-def generate_pdf(df: pd.DataFrame, title: str = "Results") -> str:
-    filename = f"results/{uuid.uuid4().hex}.pdf"
-    doc = SimpleDocTemplate(filename, pagesize=landscape(letter))
-    elements = []
+# =======================================
+# PDF generator — dark header
+# =======================================
+def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
+    """
+    Landscape PDF with zebra rows and ΔE color coding.
+    """
 
-    styles = getSampleStyleSheet()
-    title_style = styles["Title"]
-    title_style.fontSize = 16
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    )
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from datetime import datetime
+    import colorsys
 
-    elements.append(Paragraph(title, title_style))
-    elements.append(Spacer(1, 12))
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    outpath = tmp.name
+    tmp.close()
 
-    data = [df.columns.to_list()] + df.values.tolist()
-    cleaned = []
-    for row in data:
-        cleaned.append([f"{x:.4f}" if isinstance(x, float) else str(x) for x in row])
-
-    col_width = (9.5 * inch) / len(df.columns)
-    table = Table(cleaned, colWidths=[col_width] * len(df.columns))
-
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ]
-        )
+    doc = SimpleDocTemplate(
+        outpath,
+        pagesize=landscape(letter),
+        leftMargin=35,
+        rightMargin=35,
+        topMargin=40,
+        bottomMargin=40
     )
 
-    elements.append(table)
-    doc.build(elements)
-    return filename
+    styles = getSampleStyleSheet()
+    normal_style = styles["Normal"]
+    normal_style.fontSize = 8
+    normal_style.leading = 10
+
+    logo_path = "static/img/logo.png"
+    header_logo = Image(logo_path, width=0.9 * inch, height=0.9 * inch) if os.path.exists(logo_path) else None
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    meta_summary = f"Generated on {timestamp}"
+
+    elements = []
+    if header_logo:
+        elements.append(header_logo)
+    elements.append(Paragraph(f"<b>{title}</b><br/>{meta_summary}", styles["Title"]))
+    elements.append(Spacer(1, 18))
+
+    columns = list(df.columns)
+    table_data = [columns]
+
+    delta_col = None
+    for c in columns:
+        if c.lower().startswith("deltae"):
+            delta_col = c
+            break
+
+    for _, row in df.iterrows():
+        row_cells = []
+        for col in columns:
+            val = row[col]
+            row_cells.append(Paragraph(str(val), normal_style))
+        table_data.append(row_cells)
+
+    delta_values = df[delta_col].astype(float).tolist() if delta_col else []
+    if delta_values:
+        d_min, d_max = min(delta_values), max(delta_values)
+        if d_max == d_min:
+            d_max = d_min + 1e-6
+    else:
+        d_min = d_max = 0.0
+
+    max_total_width = 760
+    num_cols = len(columns)
+    base_width = max_total_width / num_cols
+    col_widths = [base_width] * num_cols
+
+    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+    zebra_colors = [colors.whitesmoke, colors.white]
+
+    base_style = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]
+
+    for r in range(1, len(table_data)):
+        base_style.append(("BACKGROUND", (0, r), (-1, r), zebra_colors[r % 2]))
+
+    if delta_col:
+        idx = columns.index(delta_col)
+        for r_idx, val in enumerate(delta_values, start=1):
+            t = (val - d_min) / (d_max - d_min)
+            hue = 220 - 220 * t
+            sat = 0.65
+            light = (85 - 30 * t) / 100
+            r, g, b = colorsys.hls_to_rgb(hue / 360, light, sat)
+            color = colors.Color(r, g, b)
+            base_style.append(("BACKGROUND", (idx, r_idx), (idx, r_idx), color))
+
+    tbl.setStyle(TableStyle(base_style))
+
+    def footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        page = canvas.getPageNumber()
+        canvas.drawString(doc_.width + doc_.leftMargin - 40, 15, f"Page {page}")
+        canvas.restoreState()
+
+    doc.build(elements + [tbl], onFirstPage=footer, onLaterPages=footer)
+
+    return outpath
 
 
 # =====================================================
-# MAIN ROUTE
+# MAIN INDEX ROUTE (UPLOAD + INITIAL RUN)
 # =====================================================
 @app.route("/", methods=["GET", "POST"])
 def index():
-    # Defaults
     plate_type = "96"
     illuminant_key = "D65"
     observer_angle = "2"
@@ -231,9 +337,7 @@ def index():
     detected_wells = None
     missing_wells = None
 
-    # reference_well = actual well name (for well-mode)
     reference_well = None
-    # reference_label = what we show in UI ("Buffer", "WhiteTile", or well id)
     reference_label = "Buffer"
 
     file_token = None
@@ -244,10 +348,9 @@ def index():
     blank_input = ""
     used_blanks = []
     ref_target_preset = "Buffer"
-    custom_L, custom_a, custom_b = None, None, None
-    reference_mode = "lab"  # "lab" or "well"
+    custom_L = custom_a = custom_b = None
+    reference_mode = "lab"
 
-    # Default target display (Buffer preset)
     target_lab_default = LAB_PRESETS["Buffer"]
     target_display = (
         f"L*={target_lab_default[0]:.2f}, "
@@ -256,85 +359,77 @@ def index():
     )
 
     well_metadata = None
+    df_results = None
+    lambda_map = {}
 
     if request.method == "POST":
-        # --- basic controls ---
         plate_type = request.form.get("plate_type", plate_type)
         illuminant_key = request.form.get("illuminant_key", illuminant_key)
         observer_angle = request.form.get("observer_angle", observer_angle)
 
-        # --- ΔE mode + reference well ---
         reference_mode = request.form.get("reference_mode", "lab")
-        reference_well_form = request.form.get("reference_well") or ""
-        reference_well = reference_well_form.strip() or None
+        reference_well = (request.form.get("reference_well") or "").strip() or None
 
-        # --- reference target preset ---
         ref_target_preset = request.form.get("ref_target_preset", "Buffer")
         custom_L = request.form.get("custom_L")
         custom_a = request.form.get("custom_a")
         custom_b = request.form.get("custom_b")
 
-        # --- blanks (string of comma-separated wells) ---
         blank_input = request.form.get("blank_wells", "") or ""
         blank_list = [b.strip() for b in blank_input.split(",") if b.strip()]
 
-        # Determine Lab target if in lab mode
-        lab_target = None
         if reference_mode == "lab":
             if ref_target_preset == "Custom":
                 try:
-                    L = float(custom_L) if custom_L else 0.0
-                    a = float(custom_a) if custom_a else 0.0
-                    b = float(custom_b) if custom_b else 0.0
+                    L = float(custom_L or 0)
+                    a = float(custom_a or 0)
+                    b = float(custom_b or 0)
                     lab_target = (L, a, b)
-                except ValueError:
-                    error = "Custom L*a*b* values must be valid numbers."
-            elif ref_target_preset in LAB_PRESETS:
-                lab_target = LAB_PRESETS[ref_target_preset]
+                except Exception:
+                    error = "Invalid custom L*a*b* values."
+                    lab_target = None
             else:
-                error = "Invalid Reference Target Preset selected."
+                lab_target = LAB_PRESETS.get(ref_target_preset)
+                if lab_target is None:
+                    error = "Invalid Lab preset."
         else:
-            # For well-mode, pipeline doesn't use lab_target (we still pass a dummy)
             lab_target = (100.0, 0.0, 0.0)
 
-        # Spectra file
         uploaded = request.files.get("dataset")
-
-        if not uploaded or uploaded.filename == "":
-            error = "Please choose a valid spectra file (.xlsx, .xls, .csv)."
-
-        if reference_mode == "lab" and lab_target is None and not error:
-            error = "L*a*b* Target must be defined."
-
-        # Optional metadata file
         metadata_file = request.files.get("metadata_file")
+
+        if (not uploaded or uploaded.filename == "") and not error:
+            error = "Please upload a dataset (.xlsx, .xls, .csv)."
 
         if not error and uploaded and uploaded.filename:
             try:
                 uploaded_filename = uploaded.filename
                 token = make_token()
                 ext = os.path.splitext(uploaded_filename)[1]
-                filepath = os.path.join("uploads", token + ext)
-                uploaded.save(filepath)
+                data_path = os.path.join("uploads", token + ext)
+                uploaded.save(data_path)
                 file_token = token
 
-                # Save metadata if provided
                 meta_path = None
                 if metadata_file and metadata_file.filename:
                     meta_ext = os.path.splitext(metadata_file.filename)[1]
                     meta_path = os.path.join("uploads", f"{token}_meta{meta_ext}")
                     metadata_file.save(meta_path)
                     well_metadata, metadata_filename = build_well_metadata(
-                        meta_path,
-                        source_name=metadata_file.filename,
+                        meta_path, metadata_file.filename
                     )
 
-                plate_type_norm = normalize_plate_type(plate_type)
-
-                df_results, detected_wells, ref_well_used, used_blanks, delta_col = process_plate(
-                    excel_file=filepath,
+                pt = normalize_plate_type(plate_type)
+                (
+                    df_results,
+                    detected_wells,
+                    ref_well_used,
+                    used_blanks,
+                    delta_col,
+                ) = process_plate(
+                    excel_file=data_path,
                     reference_well=reference_well,
-                    plate_type=plate_type_norm,
+                    plate_type=pt,
                     illuminant_key=illuminant_key,
                     observer_angle_deg=float(observer_angle),
                     blank_wells=blank_list,
@@ -342,16 +437,18 @@ def index():
                     reference_mode=reference_mode,
                 )
 
-                missing_wells = compute_missing_wells(detected_wells, plate_type_norm)
+                df_export = merge_results_with_metadata(df_results.copy(), well_metadata)
+                app.config["LAST_RESULTS_DF"] = df_export
+
                 table_html = dataframe_to_html(df_results)
 
-                df_raw, _ = get_raw_matrix(filepath)
+                missing_wells = compute_missing_wells(detected_wells, pt)
+                plate_type = pt
+
+                df_raw, _ = get_raw_matrix(data_path)
                 raw_matrix_html = dataframe_to_html(df_raw)
                 wavelength_list = df_raw["Wavelength"].astype(float).tolist()
 
-                plate_type = plate_type_norm
-
-                # UI labels
                 if reference_mode == "lab":
                     reference_label = ref_target_preset
                     target_display = (
@@ -359,10 +456,16 @@ def index():
                         f"a*={lab_target[1]:.2f}, "
                         f"b*={lab_target[2]:.2f}"
                     )
-                else:  # well mode
                     reference_well = ref_well_used
+                else:
                     reference_label = ref_well_used
                     target_display = f"Reference well: {ref_well_used}"
+                    reference_well = ref_well_used
+
+                try:
+                    lambda_map = df_results.set_index("Well")["LambdaMax"].to_dict()
+                except Exception:
+                    lambda_map = {}
 
             except Exception as e:
                 print("UPLOAD/PROCESS ERROR:", e)
@@ -395,13 +498,14 @@ def index():
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
+        lambda_map=lambda_map,
         well_metadata=well_metadata,
         metadata_filename=metadata_filename,
     )
 
 
 # =====================================================
-# RECALCULATE (NO NEW UPLOAD REQUIRED)
+# RECALCULATE (NO NEW UPLOAD NEEDED)
 # =====================================================
 @app.route("/recalculate", methods=["POST"])
 def recalculate():
@@ -411,7 +515,7 @@ def recalculate():
     observer_angle = request.form.get("observer_angle", "2")
 
     reference_mode = request.form.get("reference_mode", "lab")
-    reference_well = request.form.get("reference_well") or None
+    reference_well = (request.form.get("reference_well") or "").strip() or None
 
     ref_target_preset = request.form.get("ref_target_preset", "Buffer")
     custom_L = request.form.get("custom_L")
@@ -423,13 +527,10 @@ def recalculate():
     if not file_token:
         return "Missing file token", 400
 
-    filepath, meta_path = find_paths_for_token(file_token)
+    dataset_path, meta_path = find_paths_for_token(file_token)
+    if not dataset_path:
+        return "Dataset missing", 404
 
-    if not filepath:
-        return "Dataset missing on server", 404
-
-    # Determine Lab target for lab-mode
-    lab_target = None
     if reference_mode == "lab":
         if ref_target_preset == "Custom":
             try:
@@ -447,14 +548,20 @@ def recalculate():
     else:
         lab_target = (100.0, 0.0, 0.0)
 
-    # Blanks (string)
     blank_input = request.form.get("blank_wells", "") or ""
     blank_list = [b.strip() for b in blank_input.split(",") if b.strip()]
 
-    df_results, detected_wells, ref_well_used, used_blanks, delta_col = process_plate(
-        excel_file=filepath,
+    pt = normalize_plate_type(plate_type)
+    (
+        df_results,
+        detected_wells,
+        ref_well_used,
+        used_blanks,
+        delta_col,
+    ) = process_plate(
+        excel_file=dataset_path,
         reference_well=reference_well,
-        plate_type=normalize_plate_type(plate_type),
+        plate_type=pt,
         illuminant_key=illuminant_key,
         observer_angle_deg=float(observer_angle),
         blank_wells=blank_list,
@@ -462,13 +569,21 @@ def recalculate():
         reference_mode=reference_mode,
     )
 
-    plate_type_norm = normalize_plate_type(plate_type)
-    missing_wells = compute_missing_wells(detected_wells, plate_type_norm)
-    df_raw, _ = get_raw_matrix(filepath)
+    well_metadata, metadata_filename = (
+        build_well_metadata(meta_path) if meta_path else (None, None)
+    )
+
+    df_export = merge_results_with_metadata(df_results.copy(), well_metadata)
+    app.config["LAST_RESULTS_DF"] = df_export
+
+    table_html = dataframe_to_html(df_results)
+
+    df_raw, _ = get_raw_matrix(dataset_path)
+    raw_matrix_html = dataframe_to_html(df_raw)
     wavelength_list = df_raw["Wavelength"].astype(float).tolist()
 
-    # Resolve actual reference well/label and target display
-    reference_well = ref_well_used
+    missing_wells = compute_missing_wells(detected_wells, pt)
+
     if reference_mode == "lab":
         reference_label = ref_target_preset
         target_display = (
@@ -476,19 +591,24 @@ def recalculate():
             f"a*={lab_target[1]:.2f}, "
             f"b*={lab_target[2]:.2f}"
         )
+        reference_well = ref_well_used
     else:
         reference_label = ref_well_used
         target_display = f"Reference well: {ref_well_used}"
+        reference_well = ref_well_used
 
-    plate_rows, plate_cols = get_plate_layout(plate_type_norm)
+    plate_rows, plate_cols = get_plate_layout(pt)
 
-    # Reload metadata (if exists)
-    well_metadata, metadata_filename = build_well_metadata(meta_path) if meta_path else (None, None)
+    lambda_map = {}
+    try:
+        lambda_map = df_results.set_index("Well")["LambdaMax"].to_dict()
+    except Exception:
+        lambda_map = {}
 
     return render_template(
         "index.html",
-        table_html=dataframe_to_html(df_results),
-        raw_matrix_html=dataframe_to_html(df_raw),
+        table_html=table_html,
+        raw_matrix_html=raw_matrix_html,
         error=None,
         detected_wells=detected_wells,
         missing_wells=missing_wells,
@@ -496,7 +616,7 @@ def recalculate():
         reference_label=reference_label,
         file_token=file_token,
         uploaded_filename=uploaded_filename,
-        plate_type=plate_type_norm,
+        plate_type=plate_type,
         illuminant_key=illuminant_key,
         observer_angle=observer_angle,
         plate_rows=plate_rows,
@@ -510,6 +630,7 @@ def recalculate():
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
+        lambda_map=lambda_map,
         well_metadata=well_metadata,
         metadata_filename=metadata_filename,
     )
@@ -526,31 +647,28 @@ def spectra_multi():
     if not token or not wells_raw:
         return jsonify({"error": "Missing parameters"}), 400
 
-    filepath, _ = find_paths_for_token(token)
-    if not filepath:
+    dataset_path, _ = find_paths_for_token(token)
+    if not dataset_path:
         return jsonify({"error": "Dataset not found"}), 404
 
     wells = [w.strip() for w in wells_raw.split(",") if w.strip()]
 
     try:
-        wavelengths, spectra = get_wells_spectra(filepath, wells)
+        wavelengths, spectra = get_wells_spectra(dataset_path, wells)
 
-        # Convert dict → list because JS now expects:
-        # { well: "...", absorbance: [...] }
-        formatted = []
-        for w, arr in spectra.items():
-            formatted.append({
-                "well": w,
-                "absorbance": arr
-            })
+        formatted = [
+            {"well": w, "absorbance": arr} for w, arr in spectra.items()
+        ]
 
-        return jsonify({
-            "wavelengths": wavelengths,
-            "spectra": formatted
-        })
-
+        return jsonify(
+            {
+                "wavelengths": wavelengths,
+                "spectra": formatted,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 # =====================================================
 # RATIO ENGINE
@@ -561,17 +679,20 @@ def compute_ratio_route():
     if not file_token:
         return "Missing token", 400
 
-    wlA = float(request.form.get("wlA"))
-    wlB = float(request.form.get("wlB"))
+    try:
+        wlA = float(request.form.get("wlA"))
+        wlB = float(request.form.get("wlB"))
+    except (TypeError, ValueError):
+        return "Invalid wavelengths", 400
+
     op = request.form.get("operation")
 
-    filepath, _ = find_paths_for_token(file_token)
-    if not filepath:
+    dataset_path, _ = find_paths_for_token(file_token)
+    if not dataset_path:
         return "Dataset missing on server", 404
 
-    df_raw, wells = get_raw_matrix(filepath)
+    df_raw, wells = get_raw_matrix(dataset_path)
 
-    # Find closest wavelengths
     idxA = (df_raw["Wavelength"] - wlA).abs().idxmin()
     idxB = (df_raw["Wavelength"] - wlB).abs().idxmin()
 
@@ -594,22 +715,20 @@ def compute_ratio_route():
 
 
 # =====================================================
-# CSV / PDF DOWNLOADS
+# CSV / PDF EXPORTS (with Category)
 # =====================================================
 @app.route("/download_csv", methods=["POST"])
 def download_csv():
-    html = request.form.get("data", "")
-    if not html:
-        return "No data provided", 400
-    # table_html was generated by dataframe_to_html, so this is safe
-    dfs = pd.read_html(html)
-    if not dfs:
-        return "Failed to parse table", 400
-    df = dfs[0]
-    csv_path = f"results/{uuid.uuid4().hex}.csv"
-    df.to_csv(csv_path, index=False)
+    df = app.config.get("LAST_RESULTS_DF")
+    if df is None:
+        return "No results to export", 400
+
+    os.makedirs("results", exist_ok=True)
+    out_csv = f"results/{uuid.uuid4().hex}.csv"
+    df.to_csv(out_csv, index=False)
+
     return send_file(
-        csv_path,
+        out_csv,
         as_attachment=True,
         download_name="plate_results.csv",
         mimetype="text/csv",
@@ -618,14 +737,12 @@ def download_csv():
 
 @app.route("/download_pdf", methods=["POST"])
 def download_pdf():
-    html = request.form.get("data", "")
-    if not html:
-        return "No data provided", 400
-    dfs = pd.read_html(html)
-    if not dfs:
-        return "Failed to parse table", 400
-    df = dfs[0]
+    df = app.config.get("LAST_RESULTS_DF")
+    if df is None:
+        return "No results to export", 400
+
     pdf_path = generate_pdf(df, title="Plate Results")
+
     return send_file(
         pdf_path,
         as_attachment=True,
@@ -635,48 +752,83 @@ def download_pdf():
 
 
 # =====================================================
-# DEBUG VALIDATION
+# DEBUG VALIDATION (XYZ → Lab → ΔE self-check)
 # =====================================================
 @app.route("/debug_validate")
 def debug_validate():
+    import numpy as np
     import colour
 
     try:
         wavelengths = np.arange(380, 781, 5)
-        trans = np.ones_like(wavelengths, float)
+        trans = np.ones_like(wavelengths)
 
-        shape = colour.SpectralShape(380, 780, 5)
-        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(shape)
-
-        sample_sd = colour.SpectralDistribution(
-            illum.values * trans, illum.domain
+        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(
+            colour.SpectralShape(380, 780, 5)
         )
-        XYZ = colour.sd_to_XYZ(sample_sd, illuminant=illum)
 
-        perfect = illum.copy()
-        perfect.values = illum.values
-        XYZ_white = colour.sd_to_XYZ(perfect, illuminant=illum)
-        Y_max = max(float(XYZ_white[1]), 1e-8)
+        sample_sd = colour.SpectralDistribution(trans, illum.domain)
+        XYZ_sample = colour.sd_to_XYZ(sample_sd, illuminant=illum)
 
-        XYZ_norm = XYZ / Y_max
+        XYZ_white = colour.sd_to_XYZ(illum)
+        Y_white = XYZ_white[1]
+        XYZ_norm = (XYZ_sample / Y_white) * 100
+
         wp = colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]
         Lab = colour.XYZ_to_Lab(XYZ_norm, wp)
 
-        delta_e = float(colour.delta_E([100, 0, 0], Lab, method="CIE 2000"))
+        delta = float(colour.delta_E([100, 0, 0], Lab, method="CIE 2000"))
+        status = "ok" if abs(delta) < 0.5 else "error"
 
         return jsonify(
-            status="ok",
-            XYZ_raw=XYZ.tolist(),
+            status=status,
+            XYZ_raw=XYZ_sample.tolist(),
             XYZ_norm=XYZ_norm.tolist(),
             Lab=Lab.tolist(),
-            deltaE=delta_e,
+            deltaE=delta,
         )
+
     except Exception as e:
         return jsonify(status="error", error=str(e))
 
 
 # =====================================================
-# MAIN
+# INTERNAL SELF-TEST ON STARTUP
+# =====================================================
+def run_internal_math_self_test():
+    import numpy as np
+    import colour
+
+    try:
+        wavelengths = np.arange(380, 781, 5)
+        trans = np.ones_like(wavelengths)
+
+        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(
+            colour.SpectralShape(380, 780, 5)
+        )
+
+        sample_sd = colour.SpectralDistribution(trans, illum.domain)
+        XYZ_raw = colour.sd_to_XYZ(sample_sd, illuminant=illum)
+
+        XYZ_white = colour.sd_to_XYZ(illum)
+        Y_white = XYZ_white[1]
+
+        XYZ_norm = (XYZ_raw / Y_white) * 100
+
+        wp = colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]
+        Lab = colour.XYZ_to_Lab(XYZ_norm, wp)
+
+        delta = float(colour.delta_E(Lab, [100, 0, 0], method="CIE 2000"))
+
+        assert abs(delta) < 0.5, f"ΔE too large: {delta}"
+        print("✔ Internal math self-test passed.")
+    except Exception as e:
+        print("❌ Internal math self-test FAILED:", e)
+
+
+# =====================================================
+# MAIN ENTRY POINT
 # =====================================================
 if __name__ == "__main__":
-    app.run(debug=True)
+    run_internal_math_self_test()
+    app.run(host="0.0.0.0", port=10000)

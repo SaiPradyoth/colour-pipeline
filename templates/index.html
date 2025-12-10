@@ -237,7 +237,8 @@
       color: #1b2028 !important;
       border-color: #1e293b !important;
     }
-    #results-table td, #results-table th {
+    #results-table td,
+    #results-table th {
       padding: 8px 10px;
       white-space: nowrap;
       font-size: 0.83rem;
@@ -493,116 +494,18 @@
       </div>
 
       {% if table_html %}
-      <!-- Overview + Reference -->
+      <!-- Overview + Reference summary -->
       <div class="row g-3 mb-4">
-
-        <div class="col-lg-6">
-          <div class="card-elevated h-100">
-            <h5 class="card-title">Plate overview</h5>
-            <p class="card-subtitle">Detected vs missing wells</p>
-
-            {% if detected_wells %}
-            <p class="small mt-2"><strong>Detected:</strong> {{ detected_wells | join(', ') }}</p>
-            {% endif %}
-            {% if missing_wells %}
-            <p class="small"><strong>Missing:</strong> {{ missing_wells | join(', ') }}</p>
-            {% endif %}
-            {% if used_blanks %}
-            <p class="small text-primary mb-0 mt-2"><strong>Blanks applied:</strong> {{ used_blanks | join(', ') }}</p>
-            {% endif %}
-
-            {% if metadata_filename %}
-            <p class="small mt-2 mb-0">
-              <strong>Metadata:</strong> {{ metadata_filename }}
-            </p>
-            {% elif well_metadata %}
-            <p class="small mt-2 mb-0">
-              <strong>Metadata:</strong> loaded
-            </p>
-            {% endif %}
-          </div>
-        </div>
-
         <div class="col-lg-6">
           <div class="card-elevated h-100">
             <h5 class="card-title">Reference &amp; export</h5>
-            <p class="card-subtitle">
+            <p class="card-subtitle mb-0">
               ΔE2000 is relative to: <strong>{{ reference_label or 'Target' }}</strong><br/>
               <span class="small text-muted">Target description: {{ target_display }}</span>
             </p>
-
-            <form id="recalc-form" action="/recalculate" method="post" class="mt-2">
-              <!-- BLANK WELL SELECTOR (RECALC) -->
-              <label class="small fw-bold">Blank / Background Well(s)</label>
-              <select id="blank_wells_select_recalc"
-                      class="form-select form-select-sm mb-1"
-                      multiple>
-              </select>
-              <input type="hidden"
-                     id="blank_wells_input_recalc"
-                     name="blank_wells"
-                     value="{{ blank_input or '' }}">
-              <div class="form-text" style="font-size: 0.75rem;">
-                Wells used for absorbance noise subtraction.
-              </div>
-
-              <!-- ΔE MODE + REFERENCE WELL (RECALC) -->
-              <label class="small fw-bold mt-3">ΔE Mode</label>
-              <select id="reference_mode_recalc"
-                      name="reference_mode"
-                      class="form-select form-select-sm mb-2">
-                <option value="lab"  {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
-                <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
-              </select>
-
-              <label class="small fw-bold mt-2">Reference Well (for ΔE vs Well)</label>
-              <select id="reference_well_select_recalc"
-                      name="reference_well"
-                      class="form-select form-select-sm mb-2"
-                      data-selected-reference="{{ reference_well or '' }}">
-              </select>
-                
-              <!-- FIXED REFERENCE COLOR TARGET (RECALC) -->
-              <label class="small fw-bold mt-3">ΔE Zero Point Target (Lab mode)</label>
-              <select id="ref_target_preset_recalc" name="ref_target_preset" class="form-select form-select-sm mb-2">
-                  <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
-                  <option value="Buffer"    {% if ref_target_preset=='Buffer'    %}selected{% endif %}>Blank / Buffer</option>
-                  <option value="Black"     {% if ref_target_preset=='Black'     %}selected{% endif %}>Perfect Black</option>
-                  <option value="Custom"    {% if ref_target_preset=='Custom'    %}selected{% endif %}>Custom L*a*b*</option>
-              </select>
-
-              <div id="custom_lab_inputs_recalc" class="row g-2 mb-2" style="display: none;">
-                  <div class="col-4"><input type="number" step="0.01" name="custom_L" class="form-control form-control-sm" placeholder="L*" value="{{ custom_L or '' }}"></div>
-                  <div class="col-4"><input type="number" step="0.01" name="custom_a" class="form-control form-control-sm" placeholder="a*" value="{{ custom_a or '' }}"></div>
-                  <div class="col-4"><input type="number" step="0.01" name="custom_b" class="form-control form-control-sm" placeholder="b*" value="{{ custom_b or '' }}"></div>
-              </div>
-                
-              <p class="small text-muted mt-2 mb-2">
-                Target ΔE is zero at: <strong>{{ target_display }}</strong>
-              </p>
-              
-              <!-- Hidden state -->
-              <input type="hidden" name="file_token" value="{{ file_token }}" />
-              <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename or '' }}" />
-              <input type="hidden" id="recalc_plate_type" name="plate_type" value="{{ plate_type }}" />
-              <input type="hidden" id="recalc_illuminant_key" name="illuminant_key" value="{{ illuminant_key }}" />
-              <input type="hidden" id="recalc_observer_angle" name="observer_angle" value="{{ observer_angle }}" />
-
-              <button class="btn btn-outline-secondary btn-sm" type="submit">Recalculate</button>
-            </form>
-
-            <div class="d-flex gap-2 mt-3">
-              <form action="/download_csv" method="post">
-                <textarea name="data" style="display:none;">{{ table_html | safe }}</textarea>
-                <button class="btn btn-success btn-sm" type="submit">Download CSV</button>
-              </form>
-
-              <form action="/download_pdf" method="post">
-                <textarea name="data" style="display:none;">{{ table_html | safe }}</textarea>
-                <button class="btn btn-danger btn-sm" type="submit">Download PDF</button>
-              </form>
-            </div>
-
+            <p class="small text-muted mt-3 mb-0">
+              Adjust reference, blanks, and export options in the ΔE Heatmap view.
+            </p>
           </div>
         </div>
       </div>
@@ -680,15 +583,127 @@
           <div id="heatmap-grid" class="heatmap-grid"></div>
         </div>
 
-        <!-- Metadata panel -->
+        <!-- Well metadata panel -->
         <div id="metadata-panel" class="mt-3">
           <h6 class="fw-semibold mb-1">Well metadata</h6>
           <div id="metadata-panel-body" class="small text-muted">
             {% if well_metadata %}
               Click a well in the heatmap to see its metadata.
             {% else %}
-              Metadata not loaded. Upload a metadata file on the Dashboard.
+              Metadata not loaded. Upload metadata on the Dashboard.
             {% endif %}
+          </div>
+        </div>
+
+        <!-- Reference / recalc / export under heatmap -->
+        <hr class="mt-4 mb-3" />
+        <div class="mt-2">
+          <div class="row g-2 mb-2">
+  <div class="col-md-3">
+    <label class="small fw-bold">Heatmap Mode</label>
+    <select id="heatmap-mode" class="form-select form-select-sm">
+      <option value="deltaE">ΔE2000</option>
+      <option value="lambda">λ_max Shift</option>
+    </select>
+  </div>
+</div>
+
+          <h6 class="fw-semibold mb-1">Reference &amp; export</h6>
+          <p class="small text-muted mb-2">
+            ΔE2000 is relative to: <strong>{{ reference_label or 'Target' }}</strong>.
+            Current target: {{ target_display }}.
+          </p>
+
+          <form id="recalc-form" action="/recalculate" method="post" class="mt-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-3">
+                <label class="small fw-bold">ΔE Mode</label>
+                <select id="reference_mode_recalc"
+                        name="reference_mode"
+                        class="form-select form-select-sm">
+                  <option value="lab"  {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
+                  <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">Reference Well (for ΔE vs Well)</label>
+                <select id="reference_well_select_recalc"
+                        name="reference_well"
+                        class="form-select form-select-sm"
+                        data-selected-reference="{{ reference_well or '' }}">
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">ΔE Zero Point Target (Lab mode)</label>
+                <select id="ref_target_preset_recalc" name="ref_target_preset" class="form-select form-select-sm">
+                    <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
+                    <option value="Buffer"    {% if ref_target_preset=='Buffer'    %}selected{% endif %}>Blank / Buffer</option>
+                    <option value="Black"     {% if ref_target_preset=='Black'     %}selected{% endif %}>Perfect Black</option>
+                    <option value="Custom"    {% if ref_target_preset=='Custom'    %}selected{% endif %}>Custom L*a*b*</option>
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">Blank / Background Well(s)</label>
+                <select id="blank_wells_select_recalc"
+                        class="form-select form-select-sm"
+                        multiple>
+                </select>
+                <input type="hidden"
+                       id="blank_wells_input_recalc"
+                       name="blank_wells"
+                       value="{{ blank_input or '' }}">
+              </div>
+            </div>
+
+            <div id="custom_lab_inputs_recalc" class="row g-2 mt-2" style="display: none;">
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_L"
+                         class="form-control form-control-sm"
+                         placeholder="L*" value="{{ custom_L or '' }}">
+                </div>
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_a"
+                         class="form-control form-control-sm"
+                         placeholder="a*" value="{{ custom_a or '' }}">
+                </div>
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_b"
+                         class="form-control form-control-sm"
+                         placeholder="b*" value="{{ custom_b or '' }}">
+                </div>
+            </div>
+
+            <p class="small text-muted mt-2 mb-2">
+              Target ΔE is zero at: <strong>{{ target_display }}</strong>
+            </p>
+            
+            <!-- Hidden state -->
+            <input type="hidden" name="file_token" value="{{ file_token }}" />
+            <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename or '' }}" />
+            <input type="hidden" id="recalc_plate_type" name="plate_type" value="{{ plate_type }}" />
+            <input type="hidden" id="recalc_illuminant_key" name="illuminant_key" value="{{ illuminant_key }}" />
+            <input type="hidden" id="recalc_observer_angle" name="observer_angle" value="{{ observer_angle }}" />
+
+            <button class="btn btn-outline-secondary btn-sm mt-1" type="submit">Recalculate</button>
+          </form>
+
+          <div class="d-flex gap-2 mt-3">
+            <!-- Hidden metadata for PDF header -->
+            <input type="hidden" id="pdf_title" value="Spectral → Color → ΔE Analysis Report" />
+                   value="Spectral → Color → ΔE Analysis Report">
+            <input type="hidden" id="pdf_metadata_summary"
+                   value="Plate: {{ plate_type }}, Illuminant: {{ illuminant_key }}, Observer: {{ observer_angle }}°, ΔE vs: {{ reference_label }}">
+
+            <form action="/download_csv" method="post">
+              <button class="btn btn-success btn-sm" type="submit">Download CSV</button>
+            </form>
+
+            <form action="/download_pdf" method="post">
+              <button class="btn btn-danger btn-sm" type="submit">Download PDF</button>
+            </form>
           </div>
         </div>
       </div>
@@ -902,7 +917,8 @@ const FILE_TOKEN      = "{{ file_token or '' }}";
 const DETECTED_WELLS  = {{ detected_wells | tojson if detected_wells else "[]" }};
 const PLATE_ROWS      = {{ plate_rows | tojson if plate_rows else "[]" }};
 const PLATE_COLS      = {{ plate_cols | list | tojson if plate_cols else "[]" }};
-const WELL_METADATA   = {{ well_metadata | tojson if well_metadata else "null" }};
+const LAMBDA_MAP = {{ lambda_map | tojson if lambda_map else "{}" }};
+const WELL_METADATA   = {{ well_metadata | tojson if well_metadata else "null" }} ;
 
 /*********************************************************
  THEME TOGGLE
@@ -988,6 +1004,10 @@ if (dropzone && fileInput) {
 }
 
 document.getElementById("upload-form")?.addEventListener("submit", () => {
+  loadingOverlay.classList.add("active");
+});
+
+document.getElementById("recalc-form")?.addEventListener("submit", () => {
   loadingOverlay.classList.add("active");
 });
 
@@ -1139,6 +1159,33 @@ function syncRecalc() {
 syncRecalc();
 
 /*********************************************************
+ λ_max COLOR MAP
+ Yellow → Red → Blue → Purple
+*********************************************************/
+function lambdaColor(lambda) {
+  // < 520 nm → Yellow
+  if (lambda < 520) {
+    return "rgb(255,240,0)";
+  }
+  // 520–540 nm → Yellow → Red
+  if (lambda < 540) {
+    let t = (lambda - 520) / 20;
+    return `rgb(${255}, ${240*(1-t)}, 0)`;
+  }
+  // 540–580 nm → Red → Blue
+  if (lambda < 580) {
+    let t = (lambda - 540) / 40;
+    return `rgb(${255*(1-t)}, 0, ${255*t})`;
+  }
+  // 580–650 nm → Blue → Purple
+  if (lambda < 650) {
+    let t = (lambda - 580) / 70;
+    return `rgb(${0*(1-t) + 128*t}, 0, ${255*(1-t) + 128*t})`;
+  }
+  // > 650 nm → Purple
+  return "rgb(128,0,128)";
+}
+/*********************************************************
  HEATMAP BUILDER + METADATA
 *********************************************************/
 function buildHeatmap() {
@@ -1228,26 +1275,42 @@ function buildHeatmap() {
 }
 
 function colorHeatmap() {
+  const mode = document.getElementById("heatmap-mode")?.value || "deltaE";
   const cells = document.querySelectorAll(".heatmap-cell.filled");
   if (!cells.length) return;
 
+  // λ_max MODE
+  if (mode === "lambda") {
+    cells.forEach(c => {
+      let w = c.dataset.well;
+      let lam = LAMBDA_MAP[w];
+      if (!lam) return;
+      c.style.background = lambdaColor(lam);
+      c.style.color = "#000";
+    });
+    return;
+  }
+
+  // ΔE2000 MODE
   const vals = [...cells].map(c => parseFloat(c.dataset.delta));
   let min = Math.min(...vals);
   let max = Math.max(...vals);
   if (max === min) max = min + 1e-6;
 
-  const theme = htmlEl.getAttribute("data-theme");
-
   cells.forEach(c => {
     const t = (parseFloat(c.dataset.delta) - min) / (max - min);
     const hue = 220 - 220*t;
-    const sat = theme === "dark" ? 70 : 80;
-    const light = theme === "dark" ? 40 + 15*t : 85 - 20*t;
-
+    const sat = 80;
+    const light = 85 - 20*t;
     c.style.background = `hsl(${hue},${sat}%,${light}%)`;
     c.style.color = light < 50 ? "#fff" : "#000";
   });
 }
+// STEP 3E — Change mode → recolor heatmap
+document.getElementById("heatmap-mode")?.addEventListener("change", () => {
+  colorHeatmap();
+});
+
 
 /*********************************************************
  METADATA PANEL + FILTERS
@@ -1311,7 +1374,6 @@ function showWellMetadata(wellId) {
   const spectraBtn = document.getElementById("view-spectra-btn");
   if (spectraBtn) {
     spectraBtn.addEventListener("click", () => {
-      // switch to spectral page and select that well
       const spectralNav = document.querySelector('[data-page="spectral"]');
       if (spectralNav) spectralNav.click();
 
@@ -1344,7 +1406,6 @@ function initMetadataFilters() {
     const field = sel.dataset.field;
     if (!field || !valuesByField[field]) return;
 
-    // clear except first
     const firstOpt = sel.querySelector("option[value='']");
     sel.innerHTML = "";
     if (firstOpt) {
@@ -1377,7 +1438,7 @@ function initMetadataFilters() {
 
 function matchesFilters(meta, filters) {
   if (!meta && filters.some(f => f.value !== "")) return false;
-  if (!meta) return true; // no filters
+  if (!meta) return true;
 
   for (const f of filters) {
     if (!f.value) continue;
@@ -1404,11 +1465,7 @@ function applyMetadataFilters() {
     const meta = WELL_METADATA && WELL_METADATA[well] ? WELL_METADATA[well] : null;
     const ok = matchesFilters(meta, filters);
 
-    if (!anyActive) {
-      c.style.opacity = "1";
-    } else {
-      c.style.opacity = ok ? "1" : "0.2";
-    }
+    c.style.opacity = !anyActive ? "1" : (ok ? "1" : "0.2");
   });
 }
 
@@ -1529,13 +1586,13 @@ async function plotSpectra(){
     }
 
     const series = data.spectra.map((obj, i) => ({
-    label: obj.well,
-    data: obj.absorbance,
-    borderColor: pastelColor(i),
-    tension: 0.25,
-    pointRadius: 0,
-    pointHitRadius: 8,
-    fill: false
+      label: obj.well,
+      data: obj.absorbance,
+      borderColor: pastelColor(i),
+      tension: 0.25,
+      pointRadius: 0,
+      pointHitRadius: 8,
+      fill: false
     }));
 
     drawSpectralChart(series,data.wavelengths);

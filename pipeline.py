@@ -1,20 +1,23 @@
 # ================================
-# pipeline.py
-# Spectral → XYZ → Lab → ΔE2000 Pipeline
-# Supports: Fixed Lab Target OR Reference Well
+# pipeline.py  (FINAL VERSION)
+# Spectral → XYZ → Lab → ΔE2000
+# Supports: Lab Target OR Reference Well
+# Correct λmax detection (RAW absorbance, 400–700 nm)
 # ================================
 
+import os
 import pandas as pd
 import numpy as np
 import colour
-import os
 
-# --------------------------------
-# Internal loader (normalizes any input: xlsx, xls, csv)
-# --------------------------------
+
+# ----------------------------------------------------
+# LOAD DATAFRAME (supports xlsx, xls, csv)
+# ----------------------------------------------------
 def _load_plate_dataframe(file_path):
     ext = os.path.splitext(file_path)[1].lower()
 
+    # First load raw text to locate header row
     try:
         if ext == ".csv":
             raw = pd.read_csv(file_path, header=None, on_bad_lines="skip")
@@ -25,7 +28,7 @@ def _load_plate_dataframe(file_path):
     except Exception as e:
         raise ValueError(f"Could not read file: {e}")
 
-    # Find header row with "Wavelength"
+    # Locate header row containing “Wavelength”
     header_row_index = None
     for i in range(min(50, len(raw))):
         row_str = " ".join(raw.iloc[i].astype(str).values).lower()
@@ -34,8 +37,9 @@ def _load_plate_dataframe(file_path):
             break
 
     if header_row_index is None:
-        raise ValueError("No 'Wavelength' header found.")
+        raise ValueError("No 'Wavelength' header found in the first 50 rows.")
 
+    # Reload with header row
     if ext == ".csv":
         df = pd.read_csv(file_path, header=header_row_index, on_bad_lines="skip")
     elif ext == ".xls":
@@ -43,41 +47,43 @@ def _load_plate_dataframe(file_path):
     else:
         df = pd.read_excel(file_path, header=header_row_index)
 
+    # Clean columns
     df = df.dropna(axis=1, how="all")
     df = df.loc[:, ~df.columns.astype(str).str.contains("unnamed", case=False)]
 
-    wavelength_col = next((c for c in df.columns if "wavelength" in str(c).lower()), None)
-    if not wavelength_col:
+    # Normalize wavelength column
+    wl_col = next((c for c in df.columns if "wavelength" in str(c).lower()), None)
+    if wl_col is None:
         raise ValueError("Wavelength column not found.")
 
-    df.rename(columns={wavelength_col: "Wavelength"}, inplace=True)
+    df.rename(columns={wl_col: "Wavelength"}, inplace=True)
     df = df[pd.to_numeric(df["Wavelength"], errors="coerce").notnull()]
     df["Wavelength"] = df["Wavelength"].astype(float)
 
-    # Detect wells
-    available_wells = []
-    for col in df.columns:
-        name = str(col).strip()
-        if len(name) >= 2 and name[0].isalpha() and name[1:].isdigit():
-            available_wells.append(name)
+    # Detect well columns (A1, B2, C3, …)
+    wells = []
+    for c in df.columns:
+        s = str(c).strip()
+        if len(s) >= 2 and s[0].isalpha() and s[1:].isdigit():
+            wells.append(s)
 
-    if not available_wells:
+    if not wells:
         raise ValueError("No valid well names detected.")
 
-    return df, available_wells
+    return df, wells
 
 
-# --------------------------------
-# Scientist mode: raw matrix
-# --------------------------------
+# ----------------------------------------------------
+# RAW MATRIX EXPORTER
+# ----------------------------------------------------
 def get_raw_matrix(file_path):
     df, wells = _load_plate_dataframe(file_path)
     return df[["Wavelength"] + wells].copy(), wells
 
 
-# --------------------------------
-# MAIN PIPELINE
-# --------------------------------
+# ----------------------------------------------------
+# MAIN PLATE PROCESSOR
+# ----------------------------------------------------
 def process_plate(
     excel_file,
     reference_well=None,
@@ -86,75 +92,71 @@ def process_plate(
     observer_angle_deg=2.0,
     blank_wells=None,
     lab_target=None,
-    reference_mode="lab"
+    reference_mode="lab",
 ):
 
-    df, available_wells = _load_plate_dataframe(excel_file)
+    df, wells = _load_plate_dataframe(excel_file)
 
-    if str(plate_type) not in {"48", "96", "384"}:
-        raise ValueError("Invalid plate type.")
+    # Keep RAW data (before blank subtraction)
+    raw_df = df.copy()
 
+    # Must have Lab target in LAB mode
     if lab_target is None and reference_mode == "lab":
         raise ValueError("lab_target must be provided when reference_mode='lab'.")
 
-    # ---- BLANK SUBTRACTION ----
+    # ---------------- BLANK SUBTRACTION ----------------
     valid_blanks = []
     if blank_wells:
-        valid_blanks = [w for w in blank_wells if w in available_wells]
+        valid_blanks = [b for b in blank_wells if b in wells]
         if valid_blanks:
             blank_avg = df[valid_blanks].mean(axis=1)
-            for w in available_wells:
-                df[w] = (df[w] - blank_avg).clip(lower=0)
+            df[wells] = (df[wells].sub(blank_avg, axis=0)).clip(lower=0)
 
-    # ---- Fallback reference well ----
-    if reference_well is None or reference_well not in available_wells:
-        reference_well = available_wells[0]
+    # Reference fallback
+    if reference_well not in wells:
+        reference_well = wells[0]
 
-    # ---- Build spectral domain ----
+    # ---------------- BUILD SPECTRAL SHAPE ----------------
     wavelengths = df["Wavelength"].values.astype(float)
     interval = wavelengths[1] - wavelengths[0]
 
     shape = colour.SpectralShape(wavelengths.min(), wavelengths.max(), interval)
-    illuminant_sd = colour.SDS_ILLUMINANTS[illuminant_key].copy().align(shape)
-    domain = illuminant_sd.domain
+    illum_sd = colour.SDS_ILLUMINANTS[illuminant_key].copy().align(shape)
+    domain = illum_sd.domain
 
-    # ---- Observer whitepoint ----
+    # Observer whitepoint
     angle = float(observer_angle_deg)
     if angle in (0.0, 2.0, 5.0):
-        observer_name = "CIE 1931 2 Degree Standard Observer"
+        observer = "CIE 1931 2 Degree Standard Observer"
     elif angle == 10.0:
-        observer_name = "CIE 1964 10 Degree Standard Observer"
+        observer = "CIE 1964 10 Degree Standard Observer"
     else:
         raise ValueError("Unsupported observer angle.")
 
-    whitepoint = colour.CCS_ILLUMINANTS[observer_name][illuminant_key]
+    whitepoint = colour.CCS_ILLUMINANTS[observer][illuminant_key]
 
-    # ---- Compute Y_max using perfect transmittance ----
-    perfect_trans = np.ones_like(domain, float)
-    perfect_sd = colour.SpectralDistribution(perfect_trans, domain)
-    XYZ_white = colour.sd_to_XYZ(perfect_sd, illuminant=illuminant_sd)
-    Y_max = max(float(XYZ_white[1]), 1e-8)
+    # Normalization factor
+    XYZ_white = colour.sd_to_XYZ(illum_sd)
+    Y_max = float(XYZ_white[1])
 
-    # ---- Single-well computation helper ----
+    # ---------------- XYZ + Lab Converter ----------------
     def compute_xyz_lab(well):
         absorb = df[well].astype(float).values
         trans = 10 ** (-absorb)
 
-        # Interpolate if needed
         if not np.allclose(wavelengths, domain):
             trans = np.interp(domain, wavelengths, trans)
 
-        sample_sd = colour.SpectralDistribution(trans, domain)
-        XYZ_raw = colour.sd_to_XYZ(sample_sd, illuminant=illuminant_sd)
-        XYZ_norm = XYZ_raw / Y_max
+        sd = colour.SpectralDistribution(trans, domain)
+        XYZ = colour.sd_to_XYZ(sd, illuminant=illum_sd)
+        XYZ_norm = (XYZ / Y_max) * 100
         Lab = colour.XYZ_to_Lab(XYZ_norm, whitepoint)
-        XYZ_display = XYZ_norm * 100
-        return XYZ_display, Lab
+        return XYZ_norm, Lab
 
-    # ---- Prepare table ----
+    # ---------------- PREP RESULTS ----------------
     results = []
 
-    # Reference logic
+    # Reference Lab logic
     if reference_mode == "lab":
         ref_lab = np.array(lab_target)
         delta_col = "DeltaE_vs_Target"
@@ -162,10 +164,39 @@ def process_plate(
         ref_lab = None
         delta_col = f"DeltaE_vs_{reference_well}"
 
-    # ---- Process all wells ----
-    for w in available_wells:
+    # =========================
+    # PROCESS EACH WELL
+    # =========================
+    wl_raw = raw_df["Wavelength"].astype(float).values
+
+    for w in wells:
+
+        # -------- XYZ & Lab --------
         XYZ, Lab = compute_xyz_lab(w)
 
+        # -------- λmax using RAW absorbance --------
+        abs_raw = raw_df[w].astype(float).values
+        mask = ~np.isnan(abs_raw)
+
+        wl = wl_raw[mask]
+        absorb = abs_raw[mask]
+
+        # Restrict λmax to visible region (AuNP color shift)
+        vis_mask = (wl >= 400) & (wl <= 700)
+        if np.any(vis_mask):
+            wl_focus = wl[vis_mask]
+            abs_focus = absorb[vis_mask]
+        else:
+            wl_focus = wl
+            abs_focus = absorb
+
+        if len(abs_focus) > 0:
+            i_max = int(np.argmax(abs_focus))
+            lambda_max = float(wl_focus[i_max])
+        else:
+            lambda_max = np.nan
+
+        # -------- ΔE --------
         if reference_mode == "lab":
             delta_e = float(colour.delta_E(ref_lab, Lab, method="CIE 2000"))
         else:
@@ -174,6 +205,7 @@ def process_plate(
                 ref_lab = ref_Lab
             delta_e = float(colour.delta_E(ref_lab, Lab, method="CIE 2000"))
 
+        # Append results
         results.append({
             "Well": w,
             "X": float(XYZ[0]),
@@ -182,15 +214,17 @@ def process_plate(
             "L*": float(Lab[0]),
             "a*": float(Lab[1]),
             "b*": float(Lab[2]),
-            delta_col: delta_e
+            delta_col: delta_e,
+            "LambdaMax": lambda_max,
         })
 
-    return pd.DataFrame(results), available_wells, reference_well, valid_blanks, delta_col
+    df_results = pd.DataFrame(results)
+    return df_results, wells, reference_well, valid_blanks, delta_col
 
 
-# --------------------------------
-# Spectrum accessors
-# --------------------------------
+# ----------------------------------------------------
+# SPECTRUM ACCESSORS
+# ----------------------------------------------------
 def get_well_spectrum(file_path, well):
     df, wells = _load_plate_dataframe(file_path)
     if well not in wells:
