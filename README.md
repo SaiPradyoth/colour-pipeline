@@ -80,9 +80,79 @@ You can click a well and see its full absorbance curve.
 With color-coded ΔE or λmax values.
 
 ---
+🚧 Potential Future Upgrades
+----------------------------
 
-## 🖥 Running the Project Locally
+### 1️⃣ Automated λmax Trend Analysis  
+- Detects shifts across rows/columns  
+- Flags wells with unusual λmax patterns  
+- Useful for AuNP–pathogen aggregation assays
 
-### 1. Install required packages  
-```bash
-pip install -r requirements.txt
+### 2️⃣ Multi-Reference ΔE Comparison  
+- Compare each well against **multiple reference wells**  
+- Generate ΔE matrices (well vs. well)  
+- Cluster wells based on color similarity
+
+### 3️⃣ Machine-Learning Classification  
+- Train models to classify samples based on:
+  - Spectrum shape  
+  - λmax  
+  - ΔE fingerprints  
+- Automatically detect pathogen-positive wells
+
+### 4️⃣ Real-Time Streaming Mode  
+- Accept sequential plate reads  
+- Track color change over time  
+- Plot kinetic λmax drift graphs
+
+### 5️⃣ High-Resolution Spectral Smoothing  
+- Add:
+  - Savitzky–Golay smoothing  
+  - Derivative spectrum visualization  
+- Improves λmax accuracy in noisy datasets
+
+### 6️⃣ Multi-Metadata Heatmap Layers  
+- Switch heatmap view to:
+  - Category  
+  - Sample  
+  - AuNP concentration  
+  - Timepoint  
+- Similar to GIS map layers but for biological plates
+
+### 7️⃣ Smart Outlier Detection  
+- Identify wells with impossible values:
+  - Negative absorbance  
+  - Non-physical XYZ  
+  - ΔE spikes  
+- Displays warnings in UI
+
+### 8️⃣ Batch Processing Mode  
+- Drop in a folder of spectrometer files  
+- Automatically process all  
+- Produce a combined lab-ready report
+
+### 9️⃣ Cloud Storage & Versioning  
+- Save each run with a unique ID  
+- Pull up older plates for comparison  
+- Great for longitudinal experiments
+
+### 🔟 Export Raw Spectra to PDF  
+- Each well gets a micro spectral plot  
+- Useful for supplementary information in publications
+
+### 1️⃣1️⃣ Enhanced Heatmap Color Scales  
+- Add selectable presets:
+  - “Viridis”  
+  - “Inferno”  
+  - “Scientific Rainbow”  
+  - “Colorblind Safe”  
+
+### 1️⃣2️⃣ Full API Mode  
+- Let other software POST a dataset  
+- Receive JSON containing:
+  - Lab values  
+  - ΔE  
+  - λmax  
+  - Metadata-integrated output
+
+---
