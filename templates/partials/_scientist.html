@@ -1,0 +1,33 @@
+<section id="page-scientist" class="page-section">
+      {% if raw_matrix_html and file_token %}
+      <div class="card-elevated">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="card-title mb-1">Scientist mode</h5>
+            <p class="card-subtitle mb-0">Raw absorbance matrix.</p>
+          </div>
+          <button id="fullscreen-raw-btn" class="btn btn-outline-secondary btn-sm ms-2">Fullscreen</button>
+        </div>
+
+        <div class="table-responsive mt-3" style="max-height: 420px; overflow: auto;">
+          {{ raw_matrix_html | safe }}
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <form action="/download_raw_xlsx" method="post">
+            <input type="hidden" name="file_token" value="{{ file_token }}" />
+            <button class="btn btn-outline-primary btn-sm" disabled>Download XLSX (not wired yet)</button>
+          </form>
+
+          <form action="/download_raw_pdf" method="post">
+            <input type="hidden" name="file_token" value="{{ file_token }}" />
+            <button class="btn btn-outline-danger btn-sm" disabled>PDF (not wired yet)</button>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="card-elevated">
+        <p class="small">Upload a dataset on the Dashboard to view the raw matrix.</p>
+      </div>
+      {% endif %}
+    </section>

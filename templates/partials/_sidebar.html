@@ -1,0 +1,31 @@
+<aside class="sidebar">
+  <div>
+    <div class="brand mb-3">
+      <div class="brand-logo">
+        <img src="/static/img/logo.png" alt="Logo" onerror="this.style.display='none'" />
+      </div>
+      <div>
+        <div class="fw-semibold">Manakin Bio</div>
+        <div class="text-muted small">Spectral → Color → ΔE</div>
+      </div>
+    </div>
+
+    <ul class="nav-list">
+      <li><button class="nav-link active" data-page="dashboard">📊 Dashboard</button></li>
+      <li><button class="nav-link" data-page="heatmap" {% if not table_html %}disabled{% endif %}>🟩 ΔE Heatmap</button></li>
+      <li><button class="nav-link" data-page="spectral" {% if not table_html %}disabled{% endif %}>📈 Spectral Curves</button></li>
+      <li><button class="nav-link" data-page="ratios" {% if not table_html %}disabled{% endif %}>📐 Ratios</button></li>
+      <li><button class="nav-link" data-page="scientist" {% if not raw_matrix_html %}disabled{% endif %}>🧪 Scientist Mode</button></li>
+      <li><button class="nav-link" data-page="validate">🧩 Validate Math</button></li>
+      <li><button class="nav-link" data-page="about">❓ Help</button></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-footer">
+    <div>ΔE2000 vs Target.</div>
+    <button id="theme-toggle" class="theme-toggle" type="button">
+      <div class="theme-toggle-thumb">☀️</div>
+      <span class="theme-toggle-label">Light mode</span>
+    </button>
+  </div>
+</aside>

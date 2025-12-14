@@ -1,0 +1,160 @@
+
+/*********************************************************
+ METADATA PANEL + FILTERS
+*********************************************************/
+function showWellMetadata(wellId) {
+  const panel = document.getElementById("metadata-panel-body");
+  if (!panel) return;
+
+  const meta = WELL_METADATA && WELL_METADATA[wellId] ? WELL_METADATA[wellId] : null;
+
+  if (!meta) {
+    panel.innerHTML = `
+      <div class="small">
+        <strong>Well ${wellId}</strong><br/>
+        No metadata found for this well.
+      </div>
+    `;
+    return;
+  }
+
+  const src = meta.MetadataSource || "";
+  const sample = meta.Sample || "";
+  const aunp = meta.AuNP || "";
+  const cat = meta.Category || "";
+  const contents = meta.Contents || "";
+  const row = meta.Row || "";
+  const col = meta.Column || "";
+
+  const storageKey = `notes_${FILE_TOKEN || "noToken"}_${wellId}`;
+
+  panel.innerHTML = `
+    <div class="small">
+      <div class="fw-semibold mb-1">Well ${wellId}</div>
+      <div><strong>Sample:</strong> ${sample || "—"}</div>
+      <div><strong>Gold Nanoparticle Added:</strong> ${aunp || "—"}</div>
+      <div><strong>Category:</strong> ${cat || "—"}</div>
+      <div><strong>Contents:</strong> ${contents || "—"}</div>
+      <div><strong>Row, Column:</strong> ${row || "?"} ${col || "?"}</div>
+      <div><strong>Metadata Source:</strong> ${src || "—"}</div>
+      <hr class="my-2"/>
+      <label class="fw-semibold mb-1">Notes (local only, max 1000 chars)</label>
+      <textarea id="metadata-notes" class="form-control form-control-sm" rows="3" maxlength="1000"
+                placeholder="e.g. 'Looks like AuNP aggregation at 550 nm'"></textarea>
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <small class="text-muted">Notes are saved only in this browser.</small>
+        <button id="view-spectra-btn" class="btn btn-outline-primary btn-sm" type="button">
+          View spectra for ${wellId}
+        </button>
+      </div>
+    </div>
+  `;
+
+  const notesEl = document.getElementById("metadata-notes");
+  if (notesEl) {
+    notesEl.value = localStorage.getItem(storageKey) || "";
+    notesEl.addEventListener("input", () => {
+      localStorage.setItem(storageKey, notesEl.value.slice(0, 1000));
+    });
+  }
+
+  const spectraBtn = document.getElementById("view-spectra-btn");
+  if (spectraBtn) {
+    spectraBtn.addEventListener("click", () => {
+      const spectralNav = document.querySelector('[data-page="spectral"]');
+      if (spectralNav) spectralNav.click();
+
+      const cb = document.getElementById("well_" + wellId);
+      if (cb) {
+        cb.checked = true;
+      }
+      plotSpectra();
+    });
+  }
+}
+
+function initMetadataFilters() {
+  if (!WELL_METADATA) return;
+  const allMeta = Object.values(WELL_METADATA);
+  if (!allMeta.length) return;
+
+  const fields = ["Category", "Sample", "AuNP", "Contents", "Row"];
+  const valuesByField = {};
+  fields.forEach(f => valuesByField[f] = new Set());
+
+  allMeta.forEach(m => {
+    fields.forEach(f => {
+      const v = (m[f] ?? "").toString().trim();
+      if (v) valuesByField[f].add(v);
+    });
+  });
+
+  document.querySelectorAll(".meta-filter").forEach(sel => {
+    const field = sel.dataset.field;
+    if (!field || !valuesByField[field]) return;
+
+    const firstOpt = sel.querySelector("option[value='']");
+    sel.innerHTML = "";
+    if (firstOpt) {
+      sel.appendChild(firstOpt);
+    } else {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "All";
+      sel.appendChild(o);
+    }
+
+    Array.from(valuesByField[field]).sort().forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    });
+
+    sel.addEventListener("change", applyMetadataFilters);
+  });
+
+  const clearBtn = document.getElementById("meta-filters-clear");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      document.querySelectorAll(".meta-filter").forEach(sel => sel.value = "");
+      applyMetadataFilters();
+    });
+  }
+}
+
+function matchesFilters(meta, filters) {
+  if (!meta && filters.some(f => f.value !== "")) return false;
+  if (!meta) return true;
+
+  for (const f of filters) {
+    if (!f.value) continue;
+    const v = (meta[f.field] ?? "").toString();
+    if (v !== f.value) return false;
+  }
+  return true;
+}
+
+function applyMetadataFilters() {
+  const cells = document.querySelectorAll(".heatmap-cell.filled");
+  if (!cells.length) return;
+
+  const filterElements = Array.from(document.querySelectorAll(".meta-filter"));
+  const filters = filterElements.map(sel => ({
+    field: sel.dataset.field,
+    value: sel.value
+  }));
+
+  const anyActive = filters.some(f => f.value);
+
+  cells.forEach(c => {
+    const well = c.dataset.well;
+    const meta = WELL_METADATA && WELL_METADATA[well] ? WELL_METADATA[well] : null;
+    const ok = matchesFilters(meta, filters);
+
+    c.style.opacity = !anyActive ? "1" : (ok ? "1" : "0.2");
+  });
+}
+
+buildHeatmap();
+initMetadataFilters();

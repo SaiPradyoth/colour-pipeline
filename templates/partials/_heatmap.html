@@ -1,0 +1,189 @@
+<section id="page-heatmap" class="page-section">
+      {% if table_html %}
+      <div class="card-elevated mb-3">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center">
+          <div>
+            <h5 class="card-title mb-1">ΔE heatmap (vs {{ reference_label or 'Target' }})</h5>
+            <p class="card-subtitle mb-0">Click a well to see metadata. Filters use uploaded metadata.</p>
+          </div>
+        </div>
+
+        {% if well_metadata %}
+        <!-- Metadata filters -->
+        <div class="row g-2 mt-3">
+          <div class="col-6 col-md-2">
+            <label class="small fw-bold mb-1">Category</label>
+            <select class="form-select form-select-sm meta-filter" data-field="Category">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="small fw-bold mb-1">Sample</label>
+            <select class="form-select form-select-sm meta-filter" data-field="Sample">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="small fw-bold mb-1">AuNP</label>
+            <select class="form-select form-select-sm meta-filter" data-field="AuNP">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="small fw-bold mb-1">Contents</label>
+            <select class="form-select form-select-sm meta-filter" data-field="Contents">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-1">
+            <label class="small fw-bold mb-1">Row</label>
+            <select class="form-select form-select-sm meta-filter" data-field="Row">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-2 d-flex align-items-end">
+            <button id="meta-filters-clear" class="btn btn-outline-secondary btn-sm w-100" type="button">
+              Clear filters
+            </button>
+          </div>
+        </div>
+        {% else %}
+        <p class="small text-muted mt-3 mb-0">
+          No metadata file loaded. Upload a metadata Excel on the Dashboard to enable filters and detailed well info.
+        </p>
+        {% endif %}
+
+        <!-- Heatmap grid -->
+        <div class="heatmap-container mt-3">
+          <div id="heatmap-grid" class="heatmap-grid"></div>
+        </div>
+
+        <!-- Well metadata panel -->
+        <div id="metadata-panel" class="mt-3">
+          <h6 class="fw-semibold mb-1">Well metadata</h6>
+          <div id="metadata-panel-body" class="small text-muted">
+            {% if well_metadata %}
+              Click a well in the heatmap to see its metadata.
+            {% else %}
+              Metadata not loaded. Upload metadata on the Dashboard.
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Reference / recalc / export under heatmap -->
+        <hr class="mt-4 mb-3" />
+        <div class="mt-2">
+          <div class="row g-2 mb-2">
+  <div class="col-md-3">
+    <label class="small fw-bold">Heatmap Mode</label>
+    <select id="heatmap-mode" class="form-select form-select-sm">
+      <option value="deltaE">ΔE2000</option>
+      <option value="lambda">λ_max Shift</option>
+    </select>
+  </div>
+</div>
+
+          <h6 class="fw-semibold mb-1">Reference &amp; export</h6>
+          <p class="small text-muted mb-2">
+            ΔE2000 is relative to: <strong>{{ reference_label or 'Target' }}</strong>.
+            Current target: {{ target_display }}.
+          </p>
+
+          <form id="recalc-form" action="/recalculate" method="post" class="mt-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-3">
+                <label class="small fw-bold">ΔE Mode</label>
+                <select id="reference_mode_recalc"
+                        name="reference_mode"
+                        class="form-select form-select-sm">
+                  <option value="lab"  {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
+                  <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">Reference Well (for ΔE vs Well)</label>
+                <select id="reference_well_select_recalc"
+                        name="reference_well"
+                        class="form-select form-select-sm"
+                        data-selected-reference="{{ reference_well or '' }}">
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">ΔE Zero Point Target (Lab mode)</label>
+                <select id="ref_target_preset_recalc" name="ref_target_preset" class="form-select form-select-sm">
+                    <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
+                    <option value="Buffer"    {% if ref_target_preset=='Buffer'    %}selected{% endif %}>Blank / Buffer</option>
+                    <option value="Black"     {% if ref_target_preset=='Black'     %}selected{% endif %}>Perfect Black</option>
+                    <option value="Custom"    {% if ref_target_preset=='Custom'    %}selected{% endif %}>Custom L*a*b*</option>
+                </select>
+              </div>
+
+              <div class="col-md-3">
+                <label class="small fw-bold">Blank / Background Well(s)</label>
+                <select id="blank_wells_select_recalc"
+                        class="form-select form-select-sm"
+                        multiple>
+                </select>
+                <input type="hidden"
+                       id="blank_wells_input_recalc"
+                       name="blank_wells"
+                       value="{{ blank_input or '' }}">
+              </div>
+            </div>
+
+            <div id="custom_lab_inputs_recalc" class="row g-2 mt-2" style="display: none;">
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_L"
+                         class="form-control form-control-sm"
+                         placeholder="L*" value="{{ custom_L or '' }}">
+                </div>
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_a"
+                         class="form-control form-control-sm"
+                         placeholder="a*" value="{{ custom_a or '' }}">
+                </div>
+                <div class="col-4">
+                  <input type="number" step="0.01" name="custom_b"
+                         class="form-control form-control-sm"
+                         placeholder="b*" value="{{ custom_b or '' }}">
+                </div>
+            </div>
+
+            <p class="small text-muted mt-2 mb-2">
+              Target ΔE is zero at: <strong>{{ target_display }}</strong>
+            </p>
+            
+            <!-- Hidden state -->
+            <input type="hidden" name="file_token" value="{{ file_token }}" />
+            <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename or '' }}" />
+            <input type="hidden" id="recalc_plate_type" name="plate_type" value="{{ plate_type }}" />
+            <input type="hidden" id="recalc_illuminant_key" name="illuminant_key" value="{{ illuminant_key }}" />
+            <input type="hidden" id="recalc_observer_angle" name="observer_angle" value="{{ observer_angle }}" />
+
+            <button class="btn btn-outline-secondary btn-sm mt-1" type="submit">Recalculate</button>
+          </form>
+
+          <div class="d-flex gap-2 mt-3">
+            <!-- Hidden metadata for PDF header -->
+            <input type="hidden" id="pdf_title" value="Spectral → Color → ΔE Analysis Report" />
+            <input type="hidden" id="pdf_metadata_summary"
+                   value="Plate: {{ plate_type }}, Illuminant: {{ illuminant_key }}, Observer: {{ observer_angle }}°, ΔE vs: {{ reference_label }}">
+
+            <form action="/download_csv" method="post">
+              <button class="btn btn-success btn-sm" type="submit">Download CSV</button>
+            </form>
+
+            <form action="/download_pdf" method="post">
+              <button class="btn btn-danger btn-sm" type="submit">Download PDF</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="card-elevated">
+        <p class="small">Upload a dataset on the Dashboard to view the heatmap.</p>
+      </div>
+      {% endif %}
+    </section>
