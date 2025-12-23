@@ -809,6 +809,123 @@ def get_hsv_results():
         index=False,
         float_format="%.4f"
     )
+# =====================================================
+# Get fusion results (JSON: core + diagnostics)
+# =====================================================
+@app.route("/get_fusion_results")
+def get_fusion_results():
+    import os
+    import pandas as pd
+    from flask import jsonify
+    from analysis.fusion_qc import build_fusion_table
+
+    hsv_path = "results/v6_texture_results.csv"
+    if not os.path.exists(hsv_path):
+        return jsonify({"core": "<p class='text-muted small'>Run HSV first.</p>",
+                        "diagnostics": ""})
+
+    spec_df = app.config.get("LAST_RESULTS_DF")
+    if spec_df is None:
+        return jsonify({"core": "<p class='text-muted small'>Run Spectral pipeline first.</p>",
+                        "diagnostics": ""})
+
+    # write spectral results so fusion_qc can read it
+    os.makedirs("results", exist_ok=True)
+    spec_path = "results/plate_results_latest.csv"
+    spec_df.to_csv(spec_path, index=False)
+
+    # build fusion
+    out_csv, stats = build_fusion_table(
+        spectral_csv_path=spec_path,
+        hsv_csv_path=hsv_path,
+        out_csv_path="results/fusion_results.csv",
+    )
+
+    df = pd.read_csv(out_csv)
+
+    # --- CORE columns (clean UI) ---
+    core_cols = [
+        "Well",
+        "DeltaE_vs_Target",
+        "deltaE_norm",
+        "texture_score",
+        "mean_saturation",
+        "pixel_count",
+        "qc_imaging_bad",
+        "imaging_suggestion",
+        "fusion_score",
+    ]
+    core_cols = [c for c in core_cols if c in df.columns]
+    core_df = df[core_cols].copy()
+
+    # --- Diagnostics (collapsed) ---
+    # show correlations + full table behind toggle
+    lines = []
+    for k, v in (stats or {}).items():
+        try:
+            if v != v:  # NaN
+                lines.append(f"{k}: n/a")
+            else:
+                lines.append(f"{k}: {float(v):.3f}")
+        except Exception:
+            lines.append(f"{k}: n/a")
+
+    diag_header = ""
+    if lines:
+        diag_header = f"""
+        <div class="small text-muted mb-2">
+          <b>Diagnostics:</b> {" | ".join(lines)}
+        </div>
+        """
+
+    diag_table = df.to_html(
+        classes="table table-sm table-striped table-hover align-middle",
+        index=False,
+        float_format="%.4f",
+        border=0,
+    )
+
+    core_html = core_df.to_html(
+        classes="table table-sm table-striped table-hover align-middle",
+        index=False,
+        float_format="%.4f",
+        border=0,
+    )
+
+    return jsonify({
+        "core": core_html,
+        "diagnostics": diag_header + diag_table
+    })
+# =====================================================
+# Fusion downloads
+# =====================================================
+@app.route("/download_fusion_csv")
+def download_fusion_csv():
+    path = "results/fusion_results.csv"
+    if not os.path.exists(path):
+        return "No fusion results yet", 400
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name="fusion_results.csv",
+        mimetype="text/csv",
+    )
+
+
+@app.route("/download_fusion_pdf")
+def download_fusion_pdf():
+    path = "results/fusion_results.csv"
+    if not os.path.exists(path):
+        return "No fusion results yet", 400
+
+    df = pd.read_csv(path)
+    pdf_path = generate_pdf(df, title="Fusion Results")
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name="fusion_results.pdf",
+        mimetype="application/pdf",
+    )
 
 # =====================================================
 # Upload HSV Images + Run Processing
@@ -849,9 +966,11 @@ def upload_hsv_images():
 # =====================================================
 @app.route("/hsv_calibration_plot")
 def hsv_calibration_plot():
-    from flask import send_file
     path = "results/v6_texture_calibration.png"
+    if not os.path.exists(path):
+        return "", 404
     return send_file(path, mimetype="image/png")
+
 # =====================================================
 # INTERNAL SELF-TEST ON STARTUP
 # =====================================================
