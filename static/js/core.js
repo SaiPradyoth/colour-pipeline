@@ -6,6 +6,7 @@ const pages = {
   dashboard: document.getElementById("page-dashboard"),
   heatmap: document.getElementById("page-heatmap"),
   spectral: document.getElementById("page-spectral"),
+  image_hsv: document.getElementById("page-image_hsv"),
   ratios: document.getElementById("page-ratios"),
   scientist: document.getElementById("page-scientist"),
   validate: document.getElementById("page-validate"),

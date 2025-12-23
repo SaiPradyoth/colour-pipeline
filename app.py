@@ -791,7 +791,67 @@ def debug_validate():
     except Exception as e:
         return jsonify(status="error", error=str(e))
 
+# =====================================================
+# Getting HSV Results
+# =====================================================
+@app.route("/get_hsv_results")
+def get_hsv_results():
+    import os
+    import pandas as pd
 
+    path = "results/v6_texture_results.csv"
+    if not os.path.exists(path):
+        return "<p class='text-muted small'>No HSV results found.</p>"
+
+    df = pd.read_csv(path)
+    return df.to_html(
+        classes="table table-sm table-striped",
+        index=False,
+        float_format="%.4f"
+    )
+
+# =====================================================
+# Upload HSV Images + Run Processing
+# =====================================================
+@app.route("/upload_hsv_images", methods=["POST"])
+def upload_hsv_images():
+    import os
+    import subprocess
+    from werkzeug.utils import secure_filename
+
+    upload_dir = "uploads/hsv_images"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    files = request.files.getlist("images")
+    if not files:
+        return "No images uploaded", 400
+
+    # Save images
+    for f in files:
+        if f.filename == "":
+            continue
+        filename = secure_filename(f.filename)
+        f.save(os.path.join(upload_dir, filename))
+
+    # Run HSV analysis script
+    try:
+        subprocess.run(
+            ["python", "analysis/run_hsv_analysis.py"],
+            check=True
+        )
+    except Exception as e:
+        print("HSV processing error:", e)
+        return "HSV processing failed", 500
+
+    return "HSV analysis complete", 200
+# =====================================================
+# HSV calibration plot
+# =====================================================
+@app.route("/hsv_calibration_plot")
+def hsv_calibration_plot():
+    from flask import send_file
+    path = "results/v6_texture_calibration.png"
+    return send_file(path, mimetype="image/png")
 # =====================================================
 # INTERNAL SELF-TEST ON STARTUP
 # =====================================================

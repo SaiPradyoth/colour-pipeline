@@ -1,0 +1,104 @@
+<!-- IMAGE HSV + FUSION VIEW -->
+<section id="page-image_hsv" class="page-section" data-page="image_hsv">
+
+  <div class="card-elevated mb-4">
+    <h4 class="card-title">Image HSV Analysis</h4>
+    <p class="card-subtitle">
+      Upload well images (A1.jpg, B5.png, etc.) to compute HSV texture metrics.
+    </p>
+
+    <!-- HSV IMAGE UPLOAD -->
+    <form id="hsv-upload-form" enctype="multipart/form-data">
+      <div class="mb-3">
+        <input
+          type="file"
+          class="form-control"
+          name="images"
+          id="hsv-images"
+          multiple
+          accept=".jpg,.jpeg,.png"
+        />
+        <small class="text-muted">
+          File names must match well IDs (e.g. A1.jpg, C6.png).
+        </small>
+      </div>
+
+      <button type="submit" class="btn btn-primary">
+        Upload & Run HSV Analysis
+      </button>
+    </form>
+
+    <div id="hsv-upload-status" class="small mt-2"></div>
+  </div>
+
+  <!-- HSV RESULTS -->
+  <div class="card-elevated mb-4">
+    <h5 class="card-title">HSV Texture Results</h5>
+    <div id="hsv-results-table">
+      <p class="text-muted small">
+        Run HSV analysis to view texture metrics per well.
+      </p>
+    </div>
+  </div>
+
+  <!-- FUSION VIEW (EMBEDDED) -->
+  <div class="card-elevated">
+    <h5 class="card-title">Fusion View</h5>
+    <p class="card-subtitle">
+        
+      Combined interpretation of HSV texture and spectral color (ΔE).
+    </p>
+
+    <div id="fusion-results-table">
+      <p class="text-muted small">
+        Fusion results will appear here once both HSV and spectral data are available.
+      </p>
+    </div>
+    <!-- HSV Calibration Plot -->
+  <img
+    src="/hsv_calibration_plot"
+    alt="HSV Calibration Plot"
+    class="img-fluid mt-3"
+  />
+  </div>
+
+</section>
+
+<script>
+async function loadHSVResults() {
+  const container = document.getElementById("hsv-results-table");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/get_hsv_results");
+    container.innerHTML = await res.text();
+  } catch (e) {
+    container.innerHTML = "<p class='text-danger small'>Failed to load HSV results.</p>";
+  }
+}
+
+document.getElementById("hsv-upload-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const status = document.getElementById("hsv-upload-status");
+  status.textContent = "Uploading images and running HSV analysis…";
+
+  const formData = new FormData(e.target);
+
+  try {
+    const res = await fetch("/upload_hsv_images", {
+      method: "POST",
+      body: formData
+    });
+
+    if (!res.ok) throw new Error("HSV processing failed");
+
+    status.textContent = "HSV analysis complete.";
+    loadHSVResults();   // 🔴 THIS IS THE KEY LINE
+
+  } catch (err) {
+    status.textContent = "Error running HSV analysis.";
+    console.error(err);
+  }
+});
+</script>
