@@ -91,38 +91,12 @@ document.getElementById("toggle-diagnostics")?.addEventListener("click", (e) => 
 </section>
 
 <script>
-async function loadHSVResults() {
-  const container = document.getElementById("hsv-results-table");
-  if (!container) return;
-
-  try {
-    const res = await fetch("/get_hsv_results");
-    container.innerHTML = await res.text();
-  } catch (e) {
-    container.innerHTML = "<p class='text-danger small'>Failed to load HSV results.</p>";
-  }
-}
-
-async function loadFusionResults() {
-  try {
-    const res = await fetch("/get_fusion_results");
-    if (!res.ok) throw new Error("Failed to fetch fusion results");
-
-    const data = await res.json();
-
-    document.getElementById("fusion-results-core").innerHTML = data.core;
-    document.getElementById("fusion-results-diagnostics").innerHTML = data.diagnostics;
-
-  } catch (e) {
-    document.getElementById("fusion-results-core").innerHTML =
-      "<p class='text-danger small'>Failed to load Fusion results.</p>";
-  }
-}
-
 document.getElementById("hsv-upload-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const status = document.getElementById("hsv-upload-status");
+  const table = document.getElementById("hsv-results-table");
+
   status.textContent = "Uploading images and running HSV analysis…";
 
   const formData = new FormData(e.target);
@@ -135,19 +109,16 @@ document.getElementById("hsv-upload-form")?.addEventListener("submit", async (e)
 
     if (!res.ok) throw new Error("HSV processing failed");
 
+    // ✅ fetch HSV results table
+    const tableResp = await fetch("/get_hsv_results");
+    const html = await tableResp.text();
+    table.innerHTML = html;
+
     status.textContent = "HSV analysis complete.";
 
-    // ✅ load results AFTER success
-    loadHSVResults();
-    loadFusionResults();
-    
-    // 🔁 force-refresh calibration plot
-    document.getElementById("hsv-calibration-img").src =
-    "/hsv_calibration_plot?ts=" + Date.now();
-
   } catch (err) {
-    status.textContent = "Error running HSV analysis.";
     console.error(err);
+    status.textContent = "HSV processing failed.";
   }
 });
 </script>

@@ -1,13 +1,14 @@
 # ================================
 # app.py
 # Spectral → Color → ΔE Analyzer
-# Includes metadata → Category column in CSV/PDF
+# Stateless results (in-memory), temp files for downloads
 # ================================
 
 import os
 import uuid
 import base64
 import tempfile
+import shutil
 
 import pandas as pd
 import numpy as np
@@ -15,20 +16,13 @@ import numpy as np
 from flask import Flask, render_template, request, send_file, jsonify
 
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Table,
-    TableStyle,
-    Paragraph,
-)
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.enums import TA_LEFT
 
 # Pipeline imports
 from pipeline import (
     process_plate,
-    get_well_spectrum,    # kept in case you use it later
     get_wells_spectra,
     get_raw_matrix,
 )
@@ -38,9 +32,7 @@ from pipeline import (
 # --------------------------------
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
-
 os.makedirs("uploads", exist_ok=True)
-os.makedirs("results", exist_ok=True)
 
 # =======================================
 # Default LAB presets
@@ -97,7 +89,7 @@ def dataframe_to_html(df: pd.DataFrame) -> str:
     return df.to_html(
         classes="table table-sm table-striped table-hover align-middle",
         index=False,
-        float_format=lambda x: f"{x:.4f}",
+        float_format="%.4f",
         border=0,
     )
 
@@ -149,9 +141,7 @@ def build_well_metadata(meta_path: str, source_name: str = None):
             "Row": safe_str(row.get("Row", "")),
             "Column": safe_str(row.get("Column", "")),
             "Sample": safe_str(row.get("Sample", "")),
-            # support 'AuNP' or 'Gold Nanoparticle Added'
             "AuNP": safe_str(row.get("AuNP", row.get("Gold Nanoparticle Added", ""))),
-            # support 'Contents' or 'Well contents'
             "Contents": safe_str(row.get("Contents", row.get("Well contents", ""))),
             "Category": safe_str(row.get("Category", "")),
             "MetadataSource": src,
@@ -161,8 +151,7 @@ def build_well_metadata(meta_path: str, source_name: str = None):
 
 def merge_results_with_metadata(df_results: pd.DataFrame, well_metadata: dict):
     """
-    Add ALL metadata fields (Sample, AuNP, Contents, Category, Row, Column, MetadataSource)
-    into the exported dataframe for CSV/PDF.
+    Add ALL metadata fields into the exported dataframe for CSV/PDF.
     """
     if not well_metadata:
         return df_results
@@ -173,10 +162,8 @@ def merge_results_with_metadata(df_results: pd.DataFrame, well_metadata: dict):
     existing = [c for c in cols if c in meta_df.columns]
 
     merged = df_results.merge(meta_df[existing], on="Well", how="left")
-
     for c in existing:
         merged[c] = merged[c].fillna("")
-
     return merged
 
 
@@ -209,14 +196,11 @@ def find_paths_for_token(token: str):
 def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
     """
     Landscape PDF with zebra rows and ΔE color coding.
+    Uses a temp file (stateless).
     """
-
-    from reportlab.platypus import (
-        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-    )
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
     from reportlab.lib.pagesizes import landscape, letter
     from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib import colors
     from reportlab.lib.units import inch
     from datetime import datetime
     import colorsys
@@ -256,15 +240,14 @@ def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
 
     delta_col = None
     for c in columns:
-        if c.lower().startswith("deltae"):
+        if str(c).lower().startswith("deltae"):
             delta_col = c
             break
 
     for _, row in df.iterrows():
         row_cells = []
         for col in columns:
-            val = row[col]
-            row_cells.append(Paragraph(str(val), normal_style))
+            row_cells.append(Paragraph(str(row[col]), normal_style))
         table_data.append(row_cells)
 
     delta_values = df[delta_col].astype(float).tolist() if delta_col else []
@@ -277,13 +260,12 @@ def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
 
     max_total_width = 760
     num_cols = len(columns)
-    base_width = max_total_width / num_cols
+    base_width = max_total_width / max(1, num_cols)
     col_widths = [base_width] * num_cols
 
     tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
 
     zebra_colors = [colors.whitesmoke, colors.white]
-
     base_style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -304,9 +286,8 @@ def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
             hue = 220 - 220 * t
             sat = 0.65
             light = (85 - 30 * t) / 100
-            r, g, b = colorsys.hls_to_rgb(hue / 360, light, sat)
-            color = colors.Color(r, g, b)
-            base_style.append(("BACKGROUND", (idx, r_idx), (idx, r_idx), color))
+            rr, gg, bb = colorsys.hls_to_rgb(hue / 360, light, sat)
+            base_style.append(("BACKGROUND", (idx, r_idx), (idx, r_idx), colors.Color(rr, gg, bb)))
 
     tbl.setStyle(TableStyle(base_style))
 
@@ -318,10 +299,93 @@ def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
         canvas.restoreState()
 
     doc.build(elements + [tbl], onFirstPage=footer, onLaterPages=footer)
-
     return outpath
 
 
+# =======================================
+# In-memory fusion helper (no CSVs)
+# =======================================
+def build_fusion_table_from_dfs(spec_df: pd.DataFrame, hsv_df: pd.DataFrame):
+    """
+    Stateless fusion using in-memory dataframes.
+    Adds basic QC flags + a simple fusion score.
+    Returns (merged_df, stats_dict).
+    """
+    spec = spec_df.copy()
+    hsv = hsv_df.copy()
+
+    # identify DeltaE column
+    delta_col = None
+    for c in spec.columns:
+        if str(c).lower().startswith("deltae"):
+            delta_col = c
+            break
+
+    # merge
+    merged = pd.merge(spec, hsv, on="Well", how="left")
+
+    # numeric coercion
+    for c in ["texture_score", "mean_saturation", "pixel_count"]:
+        if c in merged.columns:
+            merged[c] = pd.to_numeric(merged[c], errors="coerce")
+
+    # QC flags (same thresholds you had; tweak anytime)
+    texture_hi = 18.0
+    sat_lo = 40.0
+    sat_hi = 120.0
+    pix_lo = 8000
+
+    merged["qc_low_pixels"] = merged["pixel_count"].fillna(0) < pix_lo
+    merged["qc_high_texture"] = merged["texture_score"] > texture_hi
+    merged["qc_sat_low"] = merged["mean_saturation"] < sat_lo
+    merged["qc_sat_high"] = merged["mean_saturation"] > sat_hi
+    merged["qc_imaging_bad"] = (
+        merged["qc_low_pixels"]
+        | merged["qc_high_texture"]
+        | merged["qc_sat_low"]
+        | merged["qc_sat_high"]
+    )
+
+    def suggest(row):
+        if pd.isna(row.get("texture_score")) and pd.isna(row.get("mean_saturation")):
+            return "No image for this well."
+        notes = []
+        if bool(row.get("qc_low_pixels")):
+            notes.append("ROI too small → reframe/closer.")
+        if bool(row.get("qc_high_texture")):
+            notes.append("High texture → glare/blur; use diffuser.")
+        if bool(row.get("qc_sat_low")):
+            notes.append("Low saturation → increase exposure.")
+        if bool(row.get("qc_sat_high")):
+            notes.append("High saturation → reduce exposure / lock WB.")
+        return " ".join(notes) if notes else "Imaging looks stable."
+
+    merged["imaging_suggestion"] = merged.apply(suggest, axis=1)
+
+    # fusion score
+    if delta_col and merged[delta_col].notna().any():
+        d = pd.to_numeric(merged[delta_col], errors="coerce")
+        denom = (float(d.max()) - float(d.min())) or 1.0
+        merged["deltaE_norm"] = (d - float(d.min())) / denom
+        stable = np.where(merged["qc_imaging_bad"].fillna(True), 0.4, 1.0)
+        merged["fusion_score"] = np.clip(merged["deltaE_norm"].fillna(0) * stable, 0, 1)
+    else:
+        merged["deltaE_norm"] = np.nan
+        merged["fusion_score"] = np.nan
+
+    # diagnostics correlations (optional)
+    stats = {}
+    if delta_col:
+        try:
+            stats["corr_deltaE_texture"] = float(pd.to_numeric(merged[delta_col], errors="coerce").corr(merged["texture_score"]))
+        except Exception:
+            stats["corr_deltaE_texture"] = float("nan")
+        try:
+            stats["corr_deltaE_sat"] = float(pd.to_numeric(merged[delta_col], errors="coerce").corr(merged["mean_saturation"]))
+        except Exception:
+            stats["corr_deltaE_sat"] = float("nan")
+
+    return merged, stats
 # =====================================================
 # MAIN INDEX ROUTE (UPLOAD + INITIAL RUN)
 # =====================================================
@@ -363,6 +427,11 @@ def index():
     lambda_map = {}
 
     if request.method == "POST":
+        # NEW RUN: clear old in-memory analysis outputs
+        app.config.pop("LAST_RESULTS_DF", None)
+        app.config.pop("LAST_HSV_DF", None)
+        app.config.pop("LAST_FUSION_DF", None)
+
         plate_type = request.form.get("plate_type", plate_type)
         illuminant_key = request.form.get("illuminant_key", illuminant_key)
         observer_angle = request.form.get("observer_angle", observer_angle)
@@ -381,10 +450,7 @@ def index():
         if reference_mode == "lab":
             if ref_target_preset == "Custom":
                 try:
-                    L = float(custom_L or 0)
-                    a = float(custom_a or 0)
-                    b = float(custom_b or 0)
-                    lab_target = (L, a, b)
+                    lab_target = (float(custom_L or 0), float(custom_a or 0), float(custom_b or 0))
                 except Exception:
                     error = "Invalid custom L*a*b* values."
                     lab_target = None
@@ -415,9 +481,7 @@ def index():
                     meta_ext = os.path.splitext(metadata_file.filename)[1]
                     meta_path = os.path.join("uploads", f"{token}_meta{meta_ext}")
                     metadata_file.save(meta_path)
-                    well_metadata, metadata_filename = build_well_metadata(
-                        meta_path, metadata_file.filename
-                    )
+                    well_metadata, metadata_filename = build_well_metadata(meta_path, metadata_file.filename)
 
                 pt = normalize_plate_type(plate_type)
                 (
@@ -441,7 +505,6 @@ def index():
                 app.config["LAST_RESULTS_DF"] = df_export
 
                 table_html = dataframe_to_html(df_results)
-
                 missing_wells = compute_missing_wells(detected_wells, pt)
                 plate_type = pt
 
@@ -451,11 +514,7 @@ def index():
 
                 if reference_mode == "lab":
                     reference_label = ref_target_preset
-                    target_display = (
-                        f"L*={lab_target[0]:.2f}, "
-                        f"a*={lab_target[1]:.2f}, "
-                        f"b*={lab_target[2]:.2f}"
-                    )
+                    target_display = f"L*={lab_target[0]:.2f}, a*={lab_target[1]:.2f}, b*={lab_target[2]:.2f}"
                     reference_well = ref_well_used
                 else:
                     reference_label = ref_well_used
@@ -499,6 +558,7 @@ def index():
         target_display=target_display,
         reference_mode=reference_mode,
         lambda_map=lambda_map,
+        hsv_map=app.config.get("HSV_MAP"),
         well_metadata=well_metadata,
         metadata_filename=metadata_filename,
     )
@@ -534,11 +594,7 @@ def recalculate():
     if reference_mode == "lab":
         if ref_target_preset == "Custom":
             try:
-                lab_target = (
-                    float(custom_L or 0),
-                    float(custom_a or 0),
-                    float(custom_b or 0),
-                )
+                lab_target = (float(custom_L or 0), float(custom_a or 0), float(custom_b or 0))
             except Exception:
                 return "Invalid custom LAB", 400
         else:
@@ -569,12 +625,12 @@ def recalculate():
         reference_mode=reference_mode,
     )
 
-    well_metadata, metadata_filename = (
-        build_well_metadata(meta_path) if meta_path else (None, None)
-    )
+    well_metadata, metadata_filename = build_well_metadata(meta_path) if meta_path else (None, None)
 
     df_export = merge_results_with_metadata(df_results.copy(), well_metadata)
     app.config["LAST_RESULTS_DF"] = df_export
+    # recalc invalidates downstream unless recomputed
+    app.config.pop("LAST_FUSION_DF", None)
 
     table_html = dataframe_to_html(df_results)
 
@@ -586,11 +642,7 @@ def recalculate():
 
     if reference_mode == "lab":
         reference_label = ref_target_preset
-        target_display = (
-            f"L*={lab_target[0]:.2f}, "
-            f"a*={lab_target[1]:.2f}, "
-            f"b*={lab_target[2]:.2f}"
-        )
+        target_display = f"L*={lab_target[0]:.2f}, a*={lab_target[1]:.2f}, b*={lab_target[2]:.2f}"
         reference_well = ref_well_used
     else:
         reference_label = ref_well_used
@@ -631,6 +683,7 @@ def recalculate():
         target_display=target_display,
         reference_mode=reference_mode,
         lambda_map=lambda_map,
+        hsv_map=app.config.get("HSV_MAP"),
         well_metadata=well_metadata,
         metadata_filename=metadata_filename,
     )
@@ -655,17 +708,8 @@ def spectra_multi():
 
     try:
         wavelengths, spectra = get_wells_spectra(dataset_path, wells)
-
-        formatted = [
-            {"well": w, "absorbance": arr} for w, arr in spectra.items()
-        ]
-
-        return jsonify(
-            {
-                "wavelengths": wavelengths,
-                "spectra": formatted,
-            }
-        )
+        formatted = [{"well": w, "absorbance": arr} for w, arr in spectra.items()]
+        return jsonify({"wavelengths": wavelengths, "spectra": formatted})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -715,7 +759,7 @@ def compute_ratio_route():
 
 
 # =====================================================
-# CSV / PDF EXPORTS (with Category)
+# CSV / PDF EXPORTS (temp files only)
 # =====================================================
 @app.route("/download_csv", methods=["POST"])
 def download_csv():
@@ -723,12 +767,12 @@ def download_csv():
     if df is None:
         return "No results to export", 400
 
-    os.makedirs("results", exist_ok=True)
-    out_csv = f"results/{uuid.uuid4().hex}.csv"
-    df.to_csv(out_csv, index=False)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    df.to_csv(tmp.name, index=False)
+    tmp.close()
 
     return send_file(
-        out_csv,
+        tmp.name,
         as_attachment=True,
         download_name="plate_results.csv",
         mimetype="text/csv",
@@ -742,7 +786,6 @@ def download_pdf():
         return "No results to export", 400
 
     pdf_path = generate_pdf(df, title="Plate Results")
-
     return send_file(
         pdf_path,
         as_attachment=True,
@@ -756,20 +799,16 @@ def download_pdf():
 # =====================================================
 @app.route("/debug_validate")
 def debug_validate():
-    import numpy as np
     import colour
 
     try:
         wavelengths = np.arange(380, 781, 5)
         trans = np.ones_like(wavelengths)
 
-        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(
-            colour.SpectralShape(380, 780, 5)
-        )
-
+        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(colour.SpectralShape(380, 780, 5))
         sample_sd = colour.SpectralDistribution(trans, illum.domain)
-        XYZ_sample = colour.sd_to_XYZ(sample_sd, illuminant=illum)
 
+        XYZ_sample = colour.sd_to_XYZ(sample_sd, illuminant=illum)
         XYZ_white = colour.sd_to_XYZ(illum)
         Y_white = XYZ_white[1]
         XYZ_norm = (XYZ_sample / Y_white) * 100
@@ -780,68 +819,35 @@ def debug_validate():
         delta = float(colour.delta_E([100, 0, 0], Lab, method="CIE 2000"))
         status = "ok" if abs(delta) < 0.5 else "error"
 
-        return jsonify(
-            status=status,
-            XYZ_raw=XYZ_sample.tolist(),
-            XYZ_norm=XYZ_norm.tolist(),
-            Lab=Lab.tolist(),
-            deltaE=delta,
-        )
-
+        return jsonify(status=status, XYZ_raw=XYZ_sample.tolist(), XYZ_norm=XYZ_norm.tolist(), Lab=Lab.tolist(), deltaE=delta)
     except Exception as e:
         return jsonify(status="error", error=str(e))
 
+
 # =====================================================
-# Getting HSV Results
+# HSV: show last HSV dataframe (in-memory only)
 # =====================================================
 @app.route("/get_hsv_results")
 def get_hsv_results():
-    import os
-    import pandas as pd
-
-    path = "results/v6_texture_results.csv"
-    if not os.path.exists(path):
-        return "<p class='text-muted small'>No HSV results found.</p>"
-
-    df = pd.read_csv(path)
-    return df.to_html(
-        classes="table table-sm table-striped",
-        index=False,
-        float_format="%.4f"
-    )
+    df = app.config.get("LAST_HSV_DF")
+    if df is None:
+        return "<p class='text-muted small'>No HSV results.</p>"
+    return df.to_html(classes="table table-sm table-striped", index=False, float_format="%.4f")
 # =====================================================
-# Get fusion results (JSON: core + diagnostics)
+# Get fusion results (JSON: core + diagnostics) — in-memory only
 # =====================================================
 @app.route("/get_fusion_results")
 def get_fusion_results():
-    import os
-    import pandas as pd
-    from flask import jsonify
-    from analysis.fusion_qc import build_fusion_table
-
-    hsv_path = "results/v6_texture_results.csv"
-    if not os.path.exists(hsv_path):
-        return jsonify({"core": "<p class='text-muted small'>Run HSV first.</p>",
-                        "diagnostics": ""})
-
     spec_df = app.config.get("LAST_RESULTS_DF")
     if spec_df is None:
-        return jsonify({"core": "<p class='text-muted small'>Run Spectral pipeline first.</p>",
-                        "diagnostics": ""})
+        return jsonify({"core": "<p class='text-muted small'>Run Spectral pipeline first.</p>", "diagnostics": ""})
 
-    # write spectral results so fusion_qc can read it
-    os.makedirs("results", exist_ok=True)
-    spec_path = "results/plate_results_latest.csv"
-    spec_df.to_csv(spec_path, index=False)
+    hsv_df = app.config.get("LAST_HSV_DF")
+    if hsv_df is None:
+        return jsonify({"core": "<p class='text-muted small'>Run HSV first.</p>", "diagnostics": ""})
 
-    # build fusion
-    out_csv, stats = build_fusion_table(
-        spectral_csv_path=spec_path,
-        hsv_csv_path=hsv_path,
-        out_csv_path="results/fusion_results.csv",
-    )
-
-    df = pd.read_csv(out_csv)
+    df, stats = build_fusion_table_from_dfs(spec_df=spec_df, hsv_df=hsv_df)
+    app.config["LAST_FUSION_DF"] = df
 
     # --- CORE columns (clean UI) ---
     core_cols = [
@@ -858,8 +864,7 @@ def get_fusion_results():
     core_cols = [c for c in core_cols if c in df.columns]
     core_df = df[core_cols].copy()
 
-    # --- Diagnostics (collapsed) ---
-    # show correlations + full table behind toggle
+    # --- Diagnostics header ---
     lines = []
     for k, v in (stats or {}).items():
         try:
@@ -892,20 +897,24 @@ def get_fusion_results():
         border=0,
     )
 
-    return jsonify({
-        "core": core_html,
-        "diagnostics": diag_header + diag_table
-    })
+    return jsonify({"core": core_html, "diagnostics": diag_header + diag_table})
+
+
 # =====================================================
-# Fusion downloads
+# Fusion downloads (temp files only)
 # =====================================================
 @app.route("/download_fusion_csv")
 def download_fusion_csv():
-    path = "results/fusion_results.csv"
-    if not os.path.exists(path):
+    df = app.config.get("LAST_FUSION_DF")
+    if df is None:
         return "No fusion results yet", 400
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    df.to_csv(tmp.name, index=False)
+    tmp.close()
+
     return send_file(
-        path,
+        tmp.name,
         as_attachment=True,
         download_name="fusion_results.csv",
         mimetype="text/csv",
@@ -914,11 +923,10 @@ def download_fusion_csv():
 
 @app.route("/download_fusion_pdf")
 def download_fusion_pdf():
-    path = "results/fusion_results.csv"
-    if not os.path.exists(path):
+    df = app.config.get("LAST_FUSION_DF")
+    if df is None:
         return "No fusion results yet", 400
 
-    df = pd.read_csv(path)
     pdf_path = generate_pdf(df, title="Fusion Results")
     return send_file(
         pdf_path,
@@ -927,78 +935,84 @@ def download_fusion_pdf():
         mimetype="application/pdf",
     )
 
+
 # =====================================================
-# Upload HSV Images + Run Processing
+# Upload HSV Images + Run Processing (stateless per run)
 # =====================================================
 @app.route("/upload_hsv_images", methods=["POST"])
 def upload_hsv_images():
-    import os
-    import subprocess
     from werkzeug.utils import secure_filename
+    from analysis.run_hsv_analysis import run_hsv_analysis
 
     upload_dir = "uploads/hsv_images"
     os.makedirs(upload_dir, exist_ok=True)
+
+    # IMPORTANT: clear old images so each run is isolated
+    for fname in os.listdir(upload_dir):
+        fp = os.path.join(upload_dir, fname)
+        if os.path.isfile(fp):
+            try:
+                os.remove(fp)
+            except Exception:
+                pass
 
     files = request.files.getlist("images")
     if not files:
         return "No images uploaded", 400
 
-    # Save images
     for f in files:
-        if f.filename == "":
+        if not f or f.filename == "":
             continue
         filename = secure_filename(f.filename)
         f.save(os.path.join(upload_dir, filename))
 
-    # Run HSV analysis script
     try:
-        subprocess.run(
-            ["python", "analysis/run_hsv_analysis.py"],
-            check=True
+        df_hsv = run_hsv_analysis(upload_dir)
+        app.config["LAST_HSV_DF"] = df_hsv
+
+        app.config.pop("LAST_FUSION_DF", None)
+        hsv_map = (
+            df_hsv 
+            .set_index("Well")[["mean_saturation", "texture_score", "pixel_count"]] 
+            .to_dict(orient="index")
         )
+
+        app.config["HSV_MAP"] = hsv_map
+        return jsonify({"status": "ok", "wells": len(hsv_map)})
+
     except Exception as e:
         print("HSV processing error:", e)
         return "HSV processing failed", 500
 
-    return "HSV analysis complete", 200
 # =====================================================
-# HSV calibration plot
+# HSV MAP
 # =====================================================
-@app.route("/hsv_calibration_plot")
-def hsv_calibration_plot():
-    path = "results/v6_texture_calibration.png"
-    if not os.path.exists(path):
-        return "", 404
-    return send_file(path, mimetype="image/png")
+@app.route("/get_hsv_map")
+def get_hsv_map():
+    return jsonify(app.config.get("HSV_MAP", {}))
 
 # =====================================================
 # INTERNAL SELF-TEST ON STARTUP
 # =====================================================
 def run_internal_math_self_test():
-    import numpy as np
     import colour
 
     try:
         wavelengths = np.arange(380, 781, 5)
         trans = np.ones_like(wavelengths)
 
-        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(
-            colour.SpectralShape(380, 780, 5)
-        )
-
+        illum = colour.SDS_ILLUMINANTS["D65"].copy().align(colour.SpectralShape(380, 780, 5))
         sample_sd = colour.SpectralDistribution(trans, illum.domain)
-        XYZ_raw = colour.sd_to_XYZ(sample_sd, illuminant=illum)
 
+        XYZ_raw = colour.sd_to_XYZ(sample_sd, illuminant=illum)
         XYZ_white = colour.sd_to_XYZ(illum)
         Y_white = XYZ_white[1]
-
         XYZ_norm = (XYZ_raw / Y_white) * 100
 
         wp = colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]
         Lab = colour.XYZ_to_Lab(XYZ_norm, wp)
 
         delta = float(colour.delta_E(Lab, [100, 0, 0], method="CIE 2000"))
-
         assert abs(delta) < 0.5, f"ΔE too large: {delta}"
         print("✔ Internal math self-test passed.")
     except Exception as e:

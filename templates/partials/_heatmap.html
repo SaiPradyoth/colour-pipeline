@@ -79,9 +79,27 @@
     <select id="heatmap-mode" class="form-select form-select-sm">
       <option value="deltaE">ΔE2000</option>
       <option value="lambda">λ_max Shift</option>
+      <option value="hsv_hue">HSV Hue (experimental)</option>
     </select>
   </div>
 </div>
+<!-- HSV texture legend -->
+<div id="hsv-texture-legend"
+     class="mt-2 small text-muted"
+     style="display:none;">
+  <div class="fw-semibold mb-1">Imaging texture (relative)</div>
+  <div class="d-flex align-items-center gap-2">
+    <div class="legend-swatch smooth"></div>
+    <span>Smooth</span>
+
+    <div class="legend-swatch medium"></div>
+    <span>Moderate</span>
+
+    <div class="legend-swatch rough"></div>
+    <span>Rough</span>
+  </div>
+</div>
+
 
           <h6 class="fw-semibold mb-1">Reference &amp; export</h6>
           <p class="small text-muted mb-2">
@@ -187,3 +205,4 @@
       </div>
       {% endif %}
     </section>
+    

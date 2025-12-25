@@ -37,3 +37,46 @@ document.getElementById("upload-form")?.addEventListener("submit", () => {
 document.getElementById("recalc-form")?.addEventListener("submit", () => {
   loadingOverlay.classList.add("active");
 });
+
+/*********************************************************
+ HSV IMAGE UPLOAD (AJAX, no page reload)
+*********************************************************/
+const hsvForm = document.getElementById("hsv-upload-form");
+
+if (hsvForm) {
+  hsvForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(hsvForm);
+    loadingOverlay.classList.add("active");
+
+    try {
+      const resp = await fetch("/upload_hsv_images", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!resp.ok) throw new Error("HSV upload failed");
+
+      // 1. Update HSV results table
+      const tableResp = await fetch("/get_hsv_results");
+      const html = await tableResp.text();
+      const target = document.getElementById("hsv-results-container");
+      if (target) target.innerHTML = html;
+
+      // 2. Refresh HSV_MAP
+      const mapResp = await fetch("/get_hsv_map");
+      window.HSV_MAP = await mapResp.json();
+
+      // 3. Recolor heatmap
+      if (typeof colorHeatmap === "function") {
+        colorHeatmap();
+      }
+
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      loadingOverlay.classList.remove("active");
+    }
+  });
+}

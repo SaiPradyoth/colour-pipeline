@@ -243,26 +243,86 @@
       white-space: nowrap;
       font-size: 0.83rem;
     }
-
     /* Heatmap */
-    .heatmap-container { overflow-x: auto; padding-bottom: 4px; }
-    .heatmap-grid {
-      display: grid;
-      gap: 4px;
-      font-size: 0.78rem;
-    }
-    .heatmap-cell {
-      border-radius: 10px;
-      text-align: center;
-      padding: 4px;
-      background: rgba(148, 163, 184, 0.18);
-      cursor: default;
-      transition: opacity 0.15s ease;
-    }
+.heatmap-container { overflow-x: auto; padding-bottom: 4px; }
+.heatmap-grid {
+  display: grid;
+  gap: 4px;
+  font-size: 0.78rem;
+}
+.heatmap-cell {
+  border-radius: 10px;
+  text-align: center;
+  padding: 4px;
+  background: rgba(148, 163, 184, 0.18);
+  cursor: default;
+  transition: opacity 0.15s ease;
+}
+
+/* HSV texture legend */
+.legend-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background-color: #cbd5e1;
+  position: relative;
+  overflow: hidden;
+}
+
+.legend-swatch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(rgba(0,0,0,0.15) 0.8px, transparent 0.9px);
+}
+
+.legend-swatch.smooth::before {
+  background-size: 8px 8px;
+  opacity: 0.4;
+}
+
+.legend-swatch.medium::before {
+  background-size: 6px 6px;
+  opacity: 0.7;
+}
+
+.legend-swatch.rough::before {
+  background-size: 4px 4px;
+  opacity: 1;
+}
+
     .heatmap-cell.filled { cursor: pointer; }
     .heatmap-cell.filled:hover {
       box-shadow: 0px 4px 12px rgba(15, 23, 42, 0.3);
     }
+
+    /* ===== HSV HEATMAP TEXTURE OVERLAY ===== */
+
+.heatmap-cell {
+  position: relative;
+  overflow: hidden;
+}
+
+.heatmap-cell .cell-label {
+  position: relative;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 500;
+  background: inherit;
+}
+
+.heatmap-cell.hsv-textured::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-image:
+    radial-gradient(rgba(0,0,0,var(--tex-opacity)) 0.8px, transparent 0.9px);
+  background-size: var(--tex-size) var(--tex-size);
+  pointer-events: none;
+}
 
     /* Spectral chart */
     #spectral-chart-container { height: 320px; }
@@ -384,6 +444,7 @@ const PLATE_TYPE      = "{{ plate_type }}";
 const LAMBDA_MAP      = {{ lambda_map | tojson if lambda_map else "{}" }};
 const WELL_METADATA   = {{ well_metadata | tojson if well_metadata else "null" }};
 const BLANK_INPUT     = "{{ blank_input or '' }}";
+window.HSV_MAP = {{ hsv_map | tojson if hsv_map else "{}" }};
 </script>
 
 <!-- THEME + BASIC UI -->
@@ -399,6 +460,7 @@ const BLANK_INPUT     = "{{ blank_input or '' }}";
 
 <!-- HEATMAP (must come BEFORE metadata_panel) -->
 <script src="{{ url_for('static', filename='js/heatmap_builder.js') }}"></script>
+<script src="{{ url_for('static', filename='js/hsv_hue_experimental.js') }}"></script>
 
 <!-- METADATA (calls buildHeatmap) -->
 <script src="{{ url_for('static', filename='js/metadata_panel.js') }}"></script>

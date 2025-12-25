@@ -71,7 +71,7 @@ function buildHeatmap() {
       if (d != null) {
         cell.classList.add("filled");
         cell.dataset.delta = d;
-        cell.textContent = d.toFixed(1);
+        cell.innerHTML = `<span class="cell-label">${d.toFixed(1)}</span>`;
         cell.onclick = () => {
           showWellMetadata(well);
         };
@@ -91,18 +91,35 @@ function colorHeatmap() {
   const mode = document.getElementById("heatmap-mode")?.value || "deltaE";
   const cells = document.querySelectorAll(".heatmap-cell.filled");
   if (!cells.length) return;
+  // Clear HSV texture when switching modes
+  cells.forEach(c => {
+    c.classList.remove("hsv-textured");
+    c.style.removeProperty("--tex-opacity");
+    c.style.removeProperty("--tex-size");
+  });
+
+
+  // HSV HUE (experimental)
+  if (mode === "hsv_hue") {
+    applyHSVHueHeatmap(cells);
+    return;
+  }
 
   // λ_max MODE
   if (mode === "lambda") {
-    cells.forEach(c => {
-      let w = c.dataset.well;
-      let lam = LAMBDA_MAP[w];
-      if (!lam) return;
-      c.style.background = lambdaColor(lam);
-      c.style.color = "#000";
-    });
-    return;
-  }
+  cells.forEach(c => {
+    let w = c.dataset.well;
+    let lam = LAMBDA_MAP[w];
+    if (!lam) {
+      c.style.background = "#e5e7eb";
+      return;
+    }
+    c.style.background = lambdaColor(lam);
+    c.style.color = "#000";
+  });
+  return;
+}
+
 
   // ΔE2000 MODE
   const vals = [...cells].map(c => parseFloat(c.dataset.delta));
@@ -112,14 +129,20 @@ function colorHeatmap() {
 
   cells.forEach(c => {
     const t = (parseFloat(c.dataset.delta) - min) / (max - min);
-    const hue = 220 - 220*t;
+    const hue = 220 - 220 * t;
     const sat = 80;
-    const light = 85 - 20*t;
+    const light = 85 - 20 * t;
     c.style.background = `hsl(${hue},${sat}%,${light}%)`;
     c.style.color = light < 50 ? "#fff" : "#000";
   });
 }
-// STEP 3E — Change mode → recolor heatmap
 document.getElementById("heatmap-mode")?.addEventListener("change", () => {
   colorHeatmap();
+
+  // Toggle HSV texture legend
+const legend = document.getElementById("hsv-texture-legend");
+if (legend) {
+  legend.style.display = (mode === "hsv_hue") ? "block" : "none";
+}
+
 });
