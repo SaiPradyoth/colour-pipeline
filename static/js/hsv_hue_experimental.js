@@ -56,10 +56,86 @@ function applyHSVHueHeatmap(cells) {
     // Relative texture strength (within plate)
     const t = (hsv.texture_score - tMin) / ((tMax - tMin) || 1);
 
+    // Tooltip hooks
+    c.onmouseenter = (e) => showHSVTooltip(e, hsv, well);
+    c.onmousemove  = (e) => showHSVTooltip(e, hsv, well);
+    c.onmouseleave = hideHSVTooltip;
+
     // Texture tuning (elegant + subtle)
     c.style.setProperty("--tex-opacity", (0.08 + t * 0.18).toFixed(2));
     c.style.setProperty("--tex-size", `${6 - t * 3}px`);
 
     c.classList.add("hsv-textured");
   });
+}
+let hsvTooltip = null;
+
+function classifySaturation(sat) {
+  if (sat >= 80) return "excellent";
+  if (sat >= 65) return "good";
+  if (sat >= 50) return "moderate";
+  if (sat >= 35) return "bad";
+  return "very bad";
+}
+
+function classifyTexture(tex) {
+  if (tex <= 6) return "excellent";
+  if (tex <= 10) return "good";
+  if (tex <= 16) return "moderate";
+  if (tex <= 25) return "bad";
+  return "very bad";
+}
+
+function classifyPixels(px) {
+  if (px >= 90000) return "excellent";
+  if (px >= 80000) return "good";
+  if (px >= 65000) return "moderate";
+  if (px >= 50000) return "bad";
+  return "very bad";
+}
+
+function showHSVTooltip(e, hsv, well) {
+  if (!hsv) return;
+
+  if (!hsvTooltip) {
+    hsvTooltip = document.createElement("div");
+    hsvTooltip.className = "hsv-tooltip";
+    document.body.appendChild(hsvTooltip);
+  }
+const satStatus = classifySaturation(hsv.mean_saturation);
+const texStatus = classifyTexture(hsv.texture_score);
+const pixStatus = classifyPixels(hsv.pixel_count);
+
+  hsvTooltip.innerHTML = `
+  <div class="metric-row">
+    <span class="metric-label">Sat</span>
+    <span class="metric-value">${hsv.mean_saturation.toFixed(1)}</span>
+    <span class="metric-status">(${satStatus})</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Texture</span>
+    <span class="metric-value">${hsv.texture_score.toFixed(1)}</span>
+    <span class="metric-status">(${texStatus})</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Pixels</span>
+    <span class="metric-value">${hsv.pixel_count.toLocaleString()}</span>
+    <span class="metric-status">(${pixStatus})</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Well</span>
+    <span class="metric-value">${well}</span>
+  </div>
+`;
+
+
+  hsvTooltip.style.left = e.clientX + 12 + "px";
+  hsvTooltip.style.top  = e.clientY + 12 + "px";
+}
+
+function hideHSVTooltip() {
+  if (hsvTooltip) {
+    hsvTooltip.remove();
+    hsvTooltip = null;
+  }
 }
