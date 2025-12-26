@@ -1,17 +1,51 @@
 <section id="page-validate" class="page-section">
-      <div class="card-elevated">
-        <h5 class="card-title">Pipeline Validation</h5>
-        <p class="card-subtitle">Internal XYZ → Lab → ΔE math verification</p>
+  <div class="card-elevated">
 
-        <button id="run-validation" class="btn btn-primary btn-sm mt-2">
-          Run Validation
-        </button>
+    <h5 class="card-title">Pipeline Validation</h5>
+    <p class="card-subtitle">
+      Internal verification of Spectral → XYZ → Lab → ΔE2000 color math
+    </p>
 
-        <div id="validation-result" class="mt-3" style="display:none;">
-          <div id="validation-status" class="fw-bold mb-2"></div>
-          <pre id="validation-details" 
-               style="background:#0f172a20; padding:12px; border-radius:8px; font-size:0.85rem;">
-          </pre>
-        </div>
+    <button id="run-validation" class="btn btn-primary btn-sm mt-2">
+      Run Validation
+    </button>
+
+    <!-- RESULTS -->
+    <div id="validation-result" class="mt-4" style="display:none;">
+
+      <!-- STATUS -->
+      <div id="validation-status" class="fw-bold mb-2"></div>
+
+      <!-- SUMMARY -->
+      <div id="validation-summary" class="mb-3"></div>
+
+      <!-- NUMERIC TABLE -->
+      <div id="validation-table" class="mb-4"></div>
+
+      <!-- MATH EXPLANATION -->
+      <div class="card-elevated mb-4" style="background:rgba(15,23,42,0.03);">
+        <h6 class="fw-semibold mb-2">Validated Color Science Math</h6>
+        <div id="validation-math"></div>
       </div>
-    </section>
+
+      <!-- RAW JSON (COLLAPSIBLE) -->
+      <details>
+        <summary class="small text-muted" style="cursor:pointer;">
+          Show raw validation output (debug)
+        </summary>
+        <pre id="validation-details"
+             class="mt-2"
+             style="
+               background:#0f172a20;
+               padding:12px;
+               border-radius:8px;
+               font-size:0.8rem;
+               max-height:300px;
+               overflow:auto;
+             ">
+        </pre>
+      </details>
+
+    </div>
+  </div>
+</section>
