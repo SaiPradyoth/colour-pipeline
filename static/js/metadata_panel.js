@@ -1,161 +1,319 @@
-
 /*********************************************************
  METADATA PANEL + FILTERS
- *********************************************************/
- function showWellMetadata(wellId) {
-   const panel = document.getElementById("metadata-panel-body");
-     if (!panel) return;
+ Click-driven, no hover
+*********************************************************/
 
-       const meta = WELL_METADATA && WELL_METADATA[wellId] ? WELL_METADATA[wellId] : null;
+/*********************************************************
+ OVERALL QC LOGIC
+*********************************************************/
+function computeOverallQC({ deltaE, texture, pixels, sat }) {
+  const reasons = [];
 
-         if (!meta) {
-             panel.innerHTML = `
-                   <div class="small">
-                           <strong>Well ${wellId}</strong><br/>
-                                   No metadata found for this well.
-                                         </div>
-                                             `;
-                                                 return;
-                                                   }
+  /* ======================
+     HARD FAIL CONDITIONS
+  ====================== */
+  if (texture === "very bad") {
+    reasons.push("Texture");
+  }
 
-                                                     const src = meta.MetadataSource || "";
-                                                       const sample = meta.Sample || "";
-                                                         const aunp = meta.AuNP || "";
-                                                           const cat = meta.Category || "";
-                                                             const contents = meta.Contents || "";
-                                                               const row = meta.Row || "";
-                                                                 const col = meta.Column || "";
+  if (Number.isFinite(pixels) && pixels < 25000) {
+    reasons.push("Pixels");
+  }
 
-                                                                   const storageKey = `notes_${FILE_TOKEN || "noToken"}_${wellId}`;
+  if (Number.isFinite(sat) && sat < 40) {
+    reasons.push("Saturation");
+  }
 
-                                                                     panel.innerHTML = `
-                                                                         <div class="small">
-                                                                               <div class="fw-semibold mb-1">Well ${wellId}</div>
-                                                                                     <div><strong>Sample:</strong> ${sample || "—"}</div>
-                                                                                           <div><strong>Gold Nanoparticle Added:</strong> ${aunp || "—"}</div>
-                                                                                                 <div><strong>Category:</strong> ${cat || "—"}</div>
-                                                                                                       <div><strong>Contents:</strong> ${contents || "—"}</div>
-                                                                                                             <div><strong>Row, Column:</strong> ${row || "?"} ${col || "?"}</div>
-                                                                                                                   <div><strong>Metadata Source:</strong> ${src || "—"}</div>
-                                                                                                                         <hr class="my-2"/>
-                                                                                                                               <label class="fw-semibold mb-1">Notes (local only, max 1000 chars)</label>
-                                                                                                                                     <textarea id="metadata-notes" class="form-control form-control-sm" rows="3" maxlength="1000"
-                                                                                                                                                     placeholder="e.g. 'Looks like AuNP aggregation at 550 nm'"></textarea>
-                                                                                                                                                           <div class="d-flex justify-content-between align-items-center mt-2">
-                                                                                                                                                                   <small class="text-muted">Notes are saved only in this browser.</small>
-                                                                                                                                                                           <button id="view-spectra-btn" class="btn btn-outline-primary btn-sm" type="button">
-                                                                                                                                                                                     View spectra for ${wellId}
-                                                                                                                                                                                             </button>
-                                                                                                                                                                                                   </div>
-                                                                                                                                                                                                       </div>
-                                                                                                                                                                                                         `;
+  if (reasons.length) {
+    return {
+      status: "FAIL",
+      reasons: reasons.map(r => `FAIL – ${r}`)
+    };
+  }
 
-                                                                                                                                                                                                           const notesEl = document.getElementById("metadata-notes");
-                                                                                                                                                                                                             if (notesEl) {
-                                                                                                                                                                                                                 notesEl.value = localStorage.getItem(storageKey) || "";
-                                                                                                                                                                                                                     notesEl.addEventListener("input", () => {
-                                                                                                                                                                                                                           localStorage.setItem(storageKey, notesEl.value.slice(0, 1000));
-                                                                                                                                                                                                                               });
-                                                                                                                                                                                                                                 }
+  /* ======================
+     REVIEW CONDITIONS
+  ====================== */
+  const reviewFlags = [];
 
-                                                                                                                                                                                                                                   const spectraBtn = document.getElementById("view-spectra-btn");
-                                                                                                                                                                                                                                     if (spectraBtn) {
-                                                                                                                                                                                                                                         spectraBtn.addEventListener("click", () => {
-                                                                                                                                                                                                                                               const spectralNav = document.querySelector('[data-page="spectral"]');
-                                                                                                                                                                                                                                                     if (spectralNav) spectralNav.click();
+  if (texture === "bad") {
+    reviewFlags.push("Texture");
+  }
 
-                                                                                                                                                                                                                                                           const cb = document.getElementById("well_" + wellId);
-                                                                                                                                                                                                                                                                 if (cb) {
-                                                                                                                                                                                                                                                                         cb.checked = true;
-                                                                                                                                                                                                                                                                               }
-                                                                                                                                                                                                                                                                                     plotSpectra();
-                                                                                                                                                                                                                                                                                         });
-                                                                                                                                                                                                                                                                                           }
-                                                                                                                                                                                                                                                                                           }
+  if (Number.isFinite(pixels) && pixels >= 25000 && pixels < 40000) {
+    reviewFlags.push("Pixels");
+  }
 
-                                                                                                                                                                                                                                                                                           function initMetadataFilters() {
-                                                                                                                                                                                                                                                                                             if (!WELL_METADATA) return;
-                                                                                                                                                                                                                                                                                               const allMeta = Object.values(WELL_METADATA);
-                                                                                                                                                                                                                                                                                                 if (!allMeta.length) return;
+  if (Number.isFinite(sat) && sat >= 40 && sat < 60) {
+    reviewFlags.push("Saturation");
+  }
 
-                                                                                                                                                                                                                                                                                                   const fields = ["Category", "Sample", "AuNP", "Contents", "Row"];
-                                                                                                                                                                                                                                                                                                     const valuesByField = {};
-                                                                                                                                                                                                                                                                                                       fields.forEach(f => valuesByField[f] = new Set());
+  if (reviewFlags.length >= 1) {
+    return {
+      status: "REVIEW",
+      reasons: reviewFlags.map(r => `REVIEW – ${r}`)
+    };
+  }
 
-                                                                                                                                                                                                                                                                                                         allMeta.forEach(m => {
-                                                                                                                                                                                                                                                                                                             fields.forEach(f => {
-                                                                                                                                                                                                                                                                                                                   const v = (m[f] ?? "").toString().trim();
-                                                                                                                                                                                                                                                                                                                         if (v) valuesByField[f].add(v);
-                                                                                                                                                                                                                                                                                                                             });
-                                                                                                                                                                                                                                                                                                                               });
+  /* ======================
+     PASS
+  ====================== */
+  return {
+    status: "PASS",
+    reasons: ["All QC checks passed"]
+  };
+}
 
-                                                                                                                                                                                                                                                                                                                                 document.querySelectorAll(".meta-filter").forEach(sel => {
-                                                                                                                                                                                                                                                                                                                                     const field = sel.dataset.field;
-                                                                                                                                                                                                                                                                                                                                         if (!field || !valuesByField[field]) return;
+/*********************************************************
+ QC BADGE RENDERER
+*********************************************************/
+function renderQCBadge(status) {
+  const map = {
+    PASS:   { cls: "bg-success", text: "PASS" },
+    REVIEW: { cls: "bg-warning text-dark", text: "REVIEW" },
+    FAIL:   { cls: "bg-danger", text: "FAIL" }
+  };
+  const b = map[status] || map.REVIEW;
+  return `<span class="badge ${b.cls}">${b.text}</span>`;
+}
 
-                                                                                                                                                                                                                                                                                                                                             const firstOpt = sel.querySelector("option[value='']");
-                                                                                                                                                                                                                                                                                                                                                 sel.innerHTML = "";
-                                                                                                                                                                                                                                                                                                                                                     if (firstOpt) {
-                                                                                                                                                                                                                                                                                                                                                           sel.appendChild(firstOpt);
-                                                                                                                                                                                                                                                                                                                                                               } else {
-                                                                                                                                                                                                                                                                                                                                                                     const o = document.createElement("option");
-                                                                                                                                                                                                                                                                                                                                                                           o.value = "";
-                                                                                                                                                                                                                                                                                                                                                                                 o.textContent = "All";
-                                                                                                                                                                                                                                                                                                                                                                                       sel.appendChild(o);
-                                                                                                                                                                                                                                                                                                                                                                                           }
+/*********************************************************
+ SAFE HSV TEXTURE CLASSIFIER (fallback)
+*********************************************************/
+function classifyTextureFallback(v) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return "unknown";
+  if (v < 0.3) return "smooth";
+  if (v < 0.6) return "moderate";
+  if (v < 0.85) return "bad";
+  return "very bad";
+}
 
-                                                                                                                                                                                                                                                                                                                                                                                               Array.from(valuesByField[field]).sort().forEach(v => {
-                                                                                                                                                                                                                                                                                                                                                                                                     const opt = document.createElement("option");
-                                                                                                                                                                                                                                                                                                                                                                                                           opt.value = v;
-                                                                                                                                                                                                                                                                                                                                                                                                                 opt.textContent = v;
-                                                                                                                                                                                                                                                                                                                                                                                                                       sel.appendChild(opt);
-                                                                                                                                                                                                                                                                                                                                                                                                                           });
+/* ============================
+   WELL DATA TILE RENDERER
+============================ */
+function showWellMetadata(wellId) {
+  const bioTile   = document.getElementById("tile-biological");
+  const specTile  = document.getElementById("tile-spectral");
+  const hsvTile   = document.getElementById("tile-hsv");
+  const hyperTile = document.getElementById("tile-hyperspectral");
 
-                                                                                                                                                                                                                                                                                                                                                                                                                               sel.addEventListener("change", applyMetadataFilters);
-                                                                                                                                                                                                                                                                                                                                                                                                                                 });
+  if (!bioTile || !specTile || !hsvTile || !hyperTile) return;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                   const clearBtn = document.getElementById("meta-filters-clear");
-                                                                                                                                                                                                                                                                                                                                                                                                                                     if (clearBtn) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                         clearBtn.addEventListener("click", () => {
-                                                                                                                                                                                                                                                                                                                                                                                                                                               document.querySelectorAll(".meta-filter").forEach(sel => sel.value = "");
-                                                                                                                                                                                                                                                                                                                                                                                                                                                     applyMetadataFilters();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                         });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                           }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                           }
+  const meta     = WELL_METADATA?.[wellId] || {};
+  const spectral = window.SPECTRAL_MAP?.[wellId] || {};
+  const hsv      = window.HSV_MAP?.[wellId] || {};
+  const hyperVal = window.HYPERSPECTRAL_MAP?.[wellId];
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                           function matchesFilters(meta, filters) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                             if (!meta && filters.some(f => f.value !== "")) return false;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                               if (!meta) return true;
+  // Pull ΔE from heatmap cell (authoritative)
+  const cell  = document.querySelector(`.heatmap-cell[data-well="${wellId}"]`);
+  const delta = cell?.dataset?.delta ? Number(cell.dataset.delta) : null;
+  const lam   = LAMBDA_MAP?.[wellId];
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                 for (const f of filters) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                     if (!f.value) continue;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                         const v = (meta[f.field] ?? "").toString();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                             if (v !== f.value) return false;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                               }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 return true;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 }
+  const qc = computeOverallQC({
+    deltaE: delta,
+    texture: classifyTexture(hsv.texture_score),
+    pixels: hsv.pixel_count || 0,
+    sat: hsv.mean_saturation
+  });
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 function applyMetadataFilters() {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   const cells = document.querySelectorAll(".heatmap-cell.filled");
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     if (!cells.length) return;
+  /* ---------- BIOLOGICAL + QC ---------- */
+  bioTile.innerHTML = `
+    <div class="fw-semibold mb-1 d-flex justify-content-between align-items-center">
+      Biological
+      ${renderQCBadge(qc.status)}
+    </div>
+    <div class="small text-muted mb-2">
+      ${qc.reasons.length ? qc.reasons.join(", ") : "All checks passed"}
+    </div>
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       const filterElements = Array.from(document.querySelectorAll(".meta-filter"));
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         const filters = filterElements.map(sel => ({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             field: sel.dataset.field,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 value: sel.value
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   }));
+    <div><strong>Well:</strong> ${wellId}</div>
+    <div><strong>Sample:</strong> ${meta.Sample || "—"}</div>
+    <div><strong>Category:</strong> ${meta.Category || "—"}</div>
+    <div><strong>Contents:</strong> ${meta.Contents || "—"}</div>
+    <div><strong>AuNP:</strong> ${meta.AuNP || "—"}</div>
+    <div class="small text-muted mt-1">${meta.MetadataSource || ""}</div>
+  `;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     const anyActive = filters.some(f => f.value);
+  /* ---------- SPECTRAL ---------- */
+  specTile.innerHTML = `
+    <div class="fw-semibold mb-1">Spectral</div>
+    <div>
+      <strong>ΔE2000:</strong>
+      ${Number.isFinite(delta) ? delta.toFixed(2) : "—"}
+      <span class="text-muted">
+        ${Number.isFinite(delta) ? "(" + classifyDelta(delta) + ")" : ""}
+      </span>
+    </div>
+    <div>
+      <strong>λmax:</strong>
+      ${Number.isFinite(lam) ? lam + " nm" : "—"}
+      <span class="text-muted">
+        ${Number.isFinite(lam) ? classifyLambda(lam) : ""}
+      </span>
+    </div>
+  `;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       cells.forEach(c => {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           const well = c.dataset.well;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               const meta = WELL_METADATA && WELL_METADATA[well] ? WELL_METADATA[well] : null;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   const ok = matchesFilters(meta, filters);
+  /* ---------- HSV IMAGING ---------- */
+  hsvTile.innerHTML = `
+    <div class="fw-semibold mb-1">HSV Imaging</div>
+    <div>
+      <strong>Saturation:</strong>
+      ${Number.isFinite(hsv.mean_saturation) ? hsv.mean_saturation.toFixed(1) : "—"}
+    </div>
+    <div>
+      <strong>Texture:</strong>
+      ${Number.isFinite(hsv.texture_score) ? classifyTexture(hsv.texture_score) : "—"}
+    </div>
+    <div>
+      <strong>Pixels:</strong>
+      ${Number.isFinite(hsv.pixel_count) ? hsv.pixel_count.toLocaleString() : "—"}
+    </div>
+  `;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       c.style.opacity = !anyActive ? "1" : (ok ? "1" : "0.2");
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         }
+  /* ---------- HYPERSPECTRAL ---------- */
+  const hyperStatus =
+    Number.isFinite(hyperVal)
+      ? (hyperVal < 10 ? "Stable"
+        : hyperVal < 20 ? "Moderate"
+        : "Unstable")
+      : null;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         buildHeatmap();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         initMetadataFilters();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+  hyperTile.innerHTML = `
+    <div class="fw-semibold mb-1">Hyperspectral</div>
+    <div>
+      <strong>Mean CV%:</strong>
+      ${Number.isFinite(hyperVal) ? hyperVal.toFixed(1) + "%" : "—"}
+    </div>
+    <div>
+      <strong>Status:</strong>
+      ${
+        hyperStatus
+          ? `<span class="${
+              hyperStatus === "Stable"
+                ? "text-success"
+                : hyperStatus === "Moderate"
+                ? "text-warning"
+                : "text-danger"
+            }">${hyperStatus}</span>`
+          : "—"
+      }
+    </div>
+  `;
+}
+
+/* ============================
+   METADATA FILTERS
+============================ */
+function initMetadataFilters() {
+  if (!WELL_METADATA) return;
+
+  const allMeta = Object.values(WELL_METADATA);
+  if (!allMeta.length) return;
+
+  const fields = ["Category", "Sample", "AuNP", "Contents", "Row"];
+  const valuesByField = {};
+  fields.forEach(f => valuesByField[f] = new Set());
+
+  allMeta.forEach(m => {
+    fields.forEach(f => {
+      const v = (m[f] ?? "").toString().trim();
+      if (v) valuesByField[f].add(v);
+    });
+  });
+
+  document.querySelectorAll(".meta-filter").forEach(sel => {
+    const field = sel.dataset.field;
+    if (!field || !valuesByField[field]) return;
+
+    sel.innerHTML = `<option value="">All</option>`;
+    Array.from(valuesByField[field]).sort().forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    });
+
+    sel.addEventListener("change", applyMetadataFilters);
+  });
+
+  const clearBtn = document.getElementById("meta-filters-clear");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      document.querySelectorAll(".meta-filter").forEach(sel => sel.value = "");
+      applyMetadataFilters();
+    });
+  }
+}
+
+function applyMetadataFilters() {
+  const cells = document.querySelectorAll(".heatmap-cell.filled");
+  if (!cells.length) return;
+
+  const filters = Array.from(document.querySelectorAll(".meta-filter"))
+    .map(sel => ({
+      field: sel.dataset.field,
+      value: sel.value
+    }));
+
+  const anyActive = filters.some(f => f.value);
+
+  cells.forEach(c => {
+    const well = c.dataset.well;
+    const meta = WELL_METADATA ? WELL_METADATA[well] : null;
+
+    if (!anyActive) {
+      c.style.opacity = "1";
+      return;
+    }
+
+    // If filters are active and this well has no metadata → fade
+    if (!meta) {
+      c.style.opacity = "0.25";
+      return;
+    }
+
+    const ok = matchesFilters(meta, filters);
+    c.style.opacity = ok ? "1" : "0.25";
+  });
+
+}
+
+function matchesFilters(meta, filters) {
+  if (!meta && filters.some(f => f.value !== "")) return false;
+  if (!meta) return true;
+
+  for (const f of filters) {
+    if (!f.value) continue;
+    if ((meta[f.field] ?? "").toString() !== f.value) return false;
+  }
+  return true;
+}
+
+/* ============================
+   CLASSIFIERS (TEXTUAL)
+============================ */
+function classifyDelta(d) {
+  if (!Number.isFinite(d)) return "—";
+  if (d < 2) return "negligible";
+  if (d < 10) return "minor";
+  if (d < 25) return "moderate";
+  return "strong";
+}
+
+function classifyLambda(lam) {
+  if (lam < 520) return "yellow shift";
+  if (lam < 560) return "red shift";
+  if (lam < 620) return "blue shift";
+  return "deep blue";
+}
+
+/* ============================
+   INIT
+============================ */
+document.addEventListener("DOMContentLoaded", () => {
+  initMetadataFilters();
+  if (typeof buildHeatmap === "function") {
+    buildHeatmap();
+  }
+});

@@ -1,0 +1,59 @@
+<section id="page-hyperspectral" class="page-section">
+  <div class="card-elevated">
+
+    <h5 class="card-title">Hyperspectral Ingest</h5>
+    <p class="card-subtitle">
+      Upload a hyperspectral dataset folder (ENVI / raw / reflectance).
+      This step validates structure and generates a plate-level Excel for overlay.
+    </p>
+    <div class="alert alert-info small mt-2">
+      ℹ️ This upload does <b>not</b> change the heatmap.
+      <br/>
+      After processing, download the generated plate Excel and upload it
+      on the <b>Dashboard → Hyperspectral overlay</b> section to apply colors.
+    </div>
+
+    <!-- Upload -->
+    <div class="upload-dropzone mt-3" id="hyperspectral-dropzone">
+      Drag & drop a hyperspectral folder here<br/>
+      <span class="small text-muted">or click to browse (≤ 500 MB)</span>
+    </div>
+
+    <input
+      type="file"
+      id="hyperspectral-input"
+      webkitdirectory
+      directory
+      multiple
+      style="display:none"
+    />
+
+    <!-- Status -->
+    <p class="small mt-3 text-muted" id="hyperspectral-status">
+      No dataset uploaded. Awaiting hyperspectral folder.
+    </p>
+    <p class="small text-success mt-1" id="hyperspectral-success" style="display:none;">
+      ✔ Processing complete. Plate-level Excel generated. Upload it in
+      <b>Dashboard → Hyperspectral overlay</b>.
+    </p>
+
+    <!-- Results -->
+    <div id="hyperspectral-results" class="mt-4" style="display:none;">
+      <div class="card-elevated mb-3">
+        <h6 class="fw-semibold">Dataset Summary</h6>
+        <div id="hyperspectral-summary"></div>
+      </div>
+
+      <div class="card-elevated mb-3">
+        <h6 class="fw-semibold">ENVI Validation</h6>
+        <div id="hyperspectral-validation"></div>
+      </div>
+
+      <div class="card-elevated">
+        <h6 class="fw-semibold">Pipeline Compatibility Preview (no overlay applied)</h6>
+        <div id="hyperspectral-preview"></div>
+      </div>
+    </div>
+
+  </div>
+</section>

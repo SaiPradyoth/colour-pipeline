@@ -80,11 +80,20 @@ function hsvHueColor(hsv) {
 
    // QC-based background (binary, honest)
    const texClass = classifyTexture(hsv.texture_score);
-   if (texClass === "bad" || texClass === "very bad") {
-     c.style.background = "rgba(239,68,68,0.25)";   // red = unreliable
+   const lighting = window.LIGHTING_MAP?.[well];
+
+   const lightingBad =
+    lighting &&
+    (lighting.exposure !== "OK" ||
+    lighting.white_balance !== "Neutral" ||
+    lighting.glare === "Yes");
+
+   if (texClass === "bad" || texClass === "very bad" || lightingBad) {
+     c.style.background = "rgba(239,68,68,0.30)"; // unreliable
    } else {
-     c.style.background = "rgba(34,197,94,0.20)";   // green = stable
+      c.style.background = "rgba(34,197,94,0.22)"; // stable
    }
+
 
    const tex = asNumber(hsv.texture_score, tMin);
    const t = (tex - tMin) / ((tMax - tMin) || 1);
@@ -146,6 +155,26 @@ function showHSVTooltip(e, hsv, well) {
   const sat = asNumber(hsv.mean_saturation, NaN);
   const tex = asNumber(hsv.texture_score, NaN);
   const px  = asNumber(hsv.pixel_count, NaN);
+  const lighting = window.LIGHTING_MAP?.[well];
+
+  const lightingHtml = lighting ? `
+  <div class="metric-row">
+    <span class="metric-label">Exposure</span>
+    <span class="metric-value">${lighting.exposure}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">WB</span>
+    <span class="metric-value">${lighting.white_balance}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Glare</span>
+    <span class="metric-value">${lighting.glare}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Light score</span>
+    <span class="metric-value">${lighting.lighting_score}/100</span>
+  </div>
+` : "";
 
   hsvTooltip.innerHTML = `
     <div class="metric-row">
@@ -167,6 +196,7 @@ function showHSVTooltip(e, hsv, well) {
       <span class="metric-label">Well</span>
       <span class="metric-value">${well}</span>
     </div>
+    ${lightingHtml}
   `;
 
   hsvTooltip.style.left = e.clientX + 12 + "px";

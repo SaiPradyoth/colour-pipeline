@@ -2,7 +2,7 @@
  LOAD + PLOT SPECTRA
 *********************************************************/
 async function plotSpectra(){
-  const token = document.getElementById("fileToken")?.value;
+  const token = (typeof FILE_TOKEN !== "undefined" && FILE_TOKEN) ? FILE_TOKEN : document.getElementById("fileToken")?.value;
   const statusEl = document.getElementById("spectral-status");
   if (!token) {
     if (statusEl) statusEl.textContent = "Upload a dataset to view spectra.";
@@ -30,13 +30,17 @@ async function plotSpectra(){
 
     const series = data.spectra.map((obj, i) => ({
       label: obj.well,
-      data: obj.absorbance,
+      data: data.wavelengths.map((wl, idx) => ({
+        x: wl,
+        y: Number.isFinite(obj.absorbance?.[idx]) ? obj.absorbance[idx] : null
+      })),
       borderColor: pastelColor(i),
       tension: 0.25,
       pointRadius: 0,
       pointHitRadius: 8,
       fill: false
     }));
+
 
     drawSpectralChart(series,data.wavelengths);
     if (statusEl) statusEl.textContent = "Showing spectra for: " + wells.join(", ");

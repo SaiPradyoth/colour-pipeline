@@ -1,47 +1,62 @@
 <section id="page-ratios" class="page-section">
-      {% if table_html %}
-      <div class="card-elevated mb-4">
-        <h5 class="card-title">Wavelength Ratios</h5>
-        <p class="card-subtitle">Compute simple wavelength ratios for every well.</p>
 
-        <form id="ratio-form" class="row g-3 mt-2">
-          <div class="col-md-4">
-            <label class="small fw-bold">Wavelength A</label>
-            <select id="ratio-wl-A" class="form-select form-select-sm">
-              {% for wl in wavelength_list %}
+  {% if table_html %}
+
+    <div class="card-elevated mb-4">
+      <h5 class="card-title">Wavelength Ratios</h5>
+      <p class="card-subtitle">
+        Compute simple wavelength ratios for every well.
+      </p>
+
+      <form id="ratio-form" class="row g-3 mt-2">
+
+        <div class="col-md-4">
+          <label class="small fw-bold">Wavelength A</label>
+          <select id="ratio-wl-A" class="form-select form-select-sm">
+            {% for wl in wavelength_list %}
               <option value="{{ wl }}">{{ wl }} nm</option>
-              {% endfor %}
-            </select>
-          </div>
+            {% endfor %}
+          </select>
+        </div>
 
-          <div class="col-md-4">
-            <label class="small fw-bold">Wavelength B</label>
-            <select id="ratio-wl-B" class="form-select form-select-sm">
-              {% for wl in wavelength_list %}
+        <div class="col-md-4">
+          <label class="small fw-bold">Wavelength B</label>
+          <select id="ratio-wl-B" class="form-select form-select-sm">
+            {% for wl in wavelength_list %}
               <option value="{{ wl }}">{{ wl }} nm</option>
-              {% endfor %}
-            </select>
-          </div>
+            {% endfor %}
+          </select>
+        </div>
 
-          <div class="col-md-4">
-            <label class="small fw-bold">Operation</label>
-            <select id="ratio-operation" class="form-select form-select-sm">
-              <option value="divide">A / B</option>
-              <option value="subtract">A – B</option>
-              <option value="normdiff">(A – B) / B</option>
-              <option value="average">(A + B) / 2</option>
-            </select>
-          </div>
-        </form>
+        <div class="col-md-4">
+          <label class="small fw-bold">Operation</label>
+          <select id="ratio-operation" class="form-select form-select-sm">
+            <option value="divide">A / B</option>
+            <option value="subtract">A – B</option>
+            <option value="normdiff">(A – B) / B</option>
+            <option value="average">(A + B) / 2</option>
+          </select>
+        </div>
 
-        <button id="ratio-run-btn" class="btn btn-primary btn-sm mt-3">Compute Ratio</button>
+      </form>
 
-        <div id="ratio-result" class="table-responsive mt-4"></div>
-      </div>
+      <button id="ratio-run-btn"
+              class="btn btn-primary btn-sm mt-3"
+              type="button">
+        Compute Ratio
+      </button>
 
-      {% else %}
-      <div class="card-elevated">
-        <p class="small">Upload a dataset on the Dashboard to compute ratios.</p>
-      </div>
-      {% endif %}
-    </section>
+      <div id="ratio-result" class="table-responsive mt-4"></div>
+    </div>
+
+  {% else %}
+
+    <div class="card-elevated">
+      <p class="small">
+        Upload a dataset on the Dashboard to compute ratios.
+      </p>
+    </div>
+
+  {% endif %}
+
+</section>

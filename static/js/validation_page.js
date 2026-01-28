@@ -48,6 +48,58 @@ document.getElementById("run-validation")?.addEventListener("click", async () =>
   status.textContent = "✔ Math Validation Passed";
   status.style.color = "green";
 
+  // ---------- HYPERSPECTRAL VALIDATION ----------
+  let hyper;
+  try {
+    const hyperRes = await fetch("/validate_hyperspectral");
+    hyper = await hyperRes.json();
+  } catch (e) {
+    hyper = null;
+  }
+
+  if (hyper && hyper.status === "ok") {
+    summary.innerHTML += `
+      <hr/>
+      <p class="small"><b>Hyperspectral Data Validation</b></p>
+      <table class="table table-sm table-bordered">
+        <tbody>
+          <tr>
+            <td>Mean CV%</td>
+            <td><b>${hyper.stats.mean_cv.toFixed(2)}%</b></td>
+            <td>Overall spatial variability</td>
+          </tr>
+          <tr>
+            <td>Stable wells</td>
+            <td>${hyper.stats.stable_pct.toFixed(1)}%</td>
+            <td>&lt; 10% CV</td>
+          </tr>
+          <tr>
+            <td>Moderate wells</td>
+            <td>${hyper.stats.moderate_pct.toFixed(1)}%</td>
+            <td>10–20% CV</td>
+          </tr>
+          <tr>
+            <td>Unstable wells</td>
+            <td>${hyper.stats.unstable_pct.toFixed(1)}%</td>
+            <td>&gt; 20% CV</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small text-muted">
+        Hyperspectral CV% reflects spatial consistency, not chemical signal.
+      </p>
+    `;
+  }
+
+if (hyper && hyper.status === "warn") {
+  summary.innerHTML += `
+    <hr/>
+    <p class="small text-warning">
+      ⚠ Hyperspectral validation warning: ${hyper.message}
+    </p>
+  `;
+}
+
   const deltaE = data.deltaE;
   const passText =
     deltaE < 0.5

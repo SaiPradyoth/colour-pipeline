@@ -5,6 +5,7 @@ const navLinks = document.querySelectorAll(".nav-link");
 const pages = {
   dashboard: document.getElementById("page-dashboard"),
   heatmap: document.getElementById("page-heatmap"),
+  hyperspectral: document.getElementById("page-hyperspectral"),
   spectral: document.getElementById("page-spectral"),
   image_hsv: document.getElementById("page-image_hsv"),
   ratios: document.getElementById("page-ratios"),

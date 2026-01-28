@@ -9,6 +9,39 @@ import uuid
 import base64
 import tempfile
 import shutil
+import sys
+import socket
+import subprocess
+
+def is_port_open(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+    except Exception:
+        return False
+    
+
+def start_hyperspectral_server():
+    """
+    Starts the hyperspectral FastAPI server on port 8001
+    only if it is not already running.
+    """
+    HYPER_PORT = 8001
+
+    if is_port_open(HYPER_PORT):
+        print(f"ℹ Hyperspectral server already running on port {HYPER_PORT}")
+        return
+
+    print("🚀 Starting hyperspectral server on port 8001...")
+
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "Hyperspectral.hyperspectral_ingest",
+        ],
+    )
 
 import pandas as pd
 import numpy as np
@@ -31,7 +64,7 @@ from pipeline import (
 # Flask + basic config
 # --------------------------------
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
+app.config["MAX_CONTENT_LENGTH"] = 600 * 1024 * 1024
 os.makedirs("uploads", exist_ok=True)
 
 # =======================================
@@ -301,6 +334,42 @@ def generate_pdf(df: pd.DataFrame, title="Plate Results") -> str:
     doc.build(elements + [tbl], onFirstPage=footer, onLaterPages=footer)
     return outpath
 
+# =====================================================
+# HYPERSPECTRAL PAGE ROUTE
+# =====================================================
+@app.route("/hyperspectral")
+def hyperspectral_page():
+    return render_template(
+        "index.html",
+        table_html=None,
+        raw_matrix_html=None,
+        error=None,
+        detected_wells=[],
+        missing_wells=[],
+        reference_well=None,
+        reference_label="",
+        file_token=None,
+        uploaded_filename=None,
+        plate_type="96",
+        illuminant_key="D65",
+        observer_angle="2",
+        plate_rows=list("ABCDEFGH"),
+        plate_cols=list(range(1, 13)),
+        wavelength_list=[],
+        blank_input="",
+        used_blanks=[],
+        ref_target_preset="Buffer",
+        custom_L=None,
+        custom_a=None,
+        custom_b=None,
+        target_display="",
+        reference_mode="lab",
+        lambda_map={},
+        hsv_map=app.config.get("HSV_MAP") or {},
+        hyperspectral_map=app.config.get("HYPERSPECTRAL_MAP") or {},
+        well_metadata={},
+        metadata_filename=None,
+    )
 
 # =======================================
 # In-memory fusion helper (no CSVs)
@@ -398,8 +467,8 @@ def index():
     table_html = None
     raw_matrix_html = None
     error = None
-    detected_wells = None
-    missing_wells = None
+    detected_wells = []
+    missing_wells = []
 
     reference_well = None
     reference_label = "Buffer"
@@ -431,6 +500,9 @@ def index():
         app.config.pop("LAST_RESULTS_DF", None)
         app.config.pop("LAST_HSV_DF", None)
         app.config.pop("LAST_FUSION_DF", None)
+        # NEW RUN: clear old in-memory analysis outputs
+        app.config.pop("LAST_LIGHTING_DF", None)
+        app.config.pop("LIGHTING_MAP", None)
 
         plate_type = request.form.get("plate_type", plate_type)
         illuminant_key = request.form.get("illuminant_key", illuminant_key)
@@ -537,8 +609,8 @@ def index():
         table_html=table_html,
         raw_matrix_html=raw_matrix_html,
         error=error,
-        detected_wells=detected_wells,
-        missing_wells=missing_wells,
+        detected_wells=detected_wells or [],
+        missing_wells=missing_wells or [],
         reference_well=reference_well,
         reference_label=reference_label,
         file_token=file_token,
@@ -546,20 +618,21 @@ def index():
         plate_type=plate_type,
         illuminant_key=illuminant_key,
         observer_angle=observer_angle,
-        plate_rows=plate_rows,
-        plate_cols=plate_cols,
-        wavelength_list=wavelength_list,
+        plate_rows=plate_rows or [],
+        plate_cols=plate_cols or [],
+        wavelength_list=wavelength_list or [],
         blank_input=blank_input,
-        used_blanks=used_blanks,
+        used_blanks=used_blanks or [],
         ref_target_preset=ref_target_preset,
         custom_L=custom_L,
         custom_a=custom_a,
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
-        lambda_map=lambda_map,
-        hsv_map=app.config.get("HSV_MAP"),
-        well_metadata=well_metadata,
+        lambda_map=lambda_map or {},
+        hsv_map=app.config.get("HSV_MAP") or {},
+        hyperspectral_map=app.config.get("HYPERSPECTRAL_MAP") or {},
+        well_metadata=well_metadata or {},
         metadata_filename=metadata_filename,
     )
 
@@ -662,8 +735,8 @@ def recalculate():
         table_html=table_html,
         raw_matrix_html=raw_matrix_html,
         error=None,
-        detected_wells=detected_wells,
-        missing_wells=missing_wells,
+        detected_wells=detected_wells or [],
+        missing_wells=missing_wells or [],
         reference_well=reference_well,
         reference_label=reference_label,
         file_token=file_token,
@@ -671,23 +744,23 @@ def recalculate():
         plate_type=plate_type,
         illuminant_key=illuminant_key,
         observer_angle=observer_angle,
-        plate_rows=plate_rows,
-        plate_cols=plate_cols,
-        wavelength_list=wavelength_list,
+        plate_rows=plate_rows or [],
+        plate_cols=plate_cols or [],
+        wavelength_list=wavelength_list or [],
         blank_input=blank_input,
-        used_blanks=used_blanks,
+        used_blanks=used_blanks or [],
         ref_target_preset=ref_target_preset,
         custom_L=custom_L,
         custom_a=custom_a,
         custom_b=custom_b,
         target_display=target_display,
         reference_mode=reference_mode,
-        lambda_map=lambda_map,
-        hsv_map=app.config.get("HSV_MAP"),
-        well_metadata=well_metadata,
+        lambda_map=lambda_map or {},
+        hsv_map=app.config.get("HSV_MAP") or {},
+        hyperspectral_map=app.config.get("HYPERSPECTRAL_MAP") or {},
+        well_metadata=well_metadata or {},
         metadata_filename=metadata_filename,
     )
-
 
 # =====================================================
 # MULTI-WELL SPECTRA API
@@ -708,11 +781,24 @@ def spectra_multi():
 
     try:
         wavelengths, spectra = get_wells_spectra(dataset_path, wells)
-        formatted = [{"well": w, "absorbance": arr} for w, arr in spectra.items()]
-        return jsonify({"wavelengths": wavelengths, "spectra": formatted})
+
+        # Ensure JSON-serializable output
+        wavelengths = [float(w) for w in wavelengths]
+
+        formatted = []
+        for w, arr in spectra.items():
+            formatted.append({
+                "well": w,
+                "absorbance": [float(v) for v in arr]
+            })
+
+        return jsonify({
+            "wavelengths": wavelengths,
+            "spectra": formatted
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # =====================================================
 # RATIO ENGINE
@@ -935,6 +1021,50 @@ def download_fusion_pdf():
         mimetype="application/pdf",
     )
 
+@app.route("/download_hsv_lighting_csv")
+def download_hsv_lighting_csv():
+    df_hsv = app.config.get("LAST_HSV_DF")
+    df_light = app.config.get("LAST_LIGHTING_DF")
+
+    if df_hsv is None and df_light is None:
+        return "No HSV or lighting results to export", 400
+
+    rows = []
+
+    # ---- HSV section ----
+    if df_hsv is not None:
+        for metric in ["texture_score", "mean_saturation", "pixel_count"]:
+            row = {"Section": "HSV Texture", "Data set": metric}
+            for _, r in df_hsv.iterrows():
+                row[r["Well"]] = r.get(metric)
+            rows.append(row)
+
+    # ---- Lighting section ----
+    if df_light is not None:
+        lighting_metrics = [
+            "mean_v", "pct_dark", "pct_bright", "exposure",
+            "wb_bias", "white_balance", "uniformity_ratio",
+            "uniformity", "glare", "lighting_score"
+        ]
+        for metric in lighting_metrics:
+            row = {"Section": "Lighting Diagnostics", "Data set": metric}
+            for _, r in df_light.iterrows():
+                row[r["Well"]] = r.get(metric)
+            rows.append(row)
+
+    df_out = pd.DataFrame(rows)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    df_out.to_csv(tmp.name, index=False)
+    tmp.close()
+
+    return send_file(
+        tmp.name,
+        as_attachment=True,
+        download_name="hsv_lighting_diagnostics.csv",
+        mimetype="text/csv",
+    )
+
 
 # =====================================================
 # Upload HSV Images + Run Processing (stateless per run)
@@ -943,6 +1073,7 @@ def download_fusion_pdf():
 def upload_hsv_images():
     from werkzeug.utils import secure_filename
     from analysis.run_hsv_analysis import run_hsv_analysis
+    from analysis.lighting_diagnostics import run_lighting_diagnostics
 
     upload_dir = "uploads/hsv_images"
     os.makedirs(upload_dir, exist_ok=True)
@@ -968,7 +1099,10 @@ def upload_hsv_images():
 
     try:
         df_hsv = run_hsv_analysis(upload_dir)
+        df_light = run_lighting_diagnostics(upload_dir)
+
         app.config["LAST_HSV_DF"] = df_hsv
+        app.config["LAST_LIGHTING_DF"] = df_light
 
         app.config.pop("LAST_FUSION_DF", None)
         hsv_map = (
@@ -978,11 +1112,81 @@ def upload_hsv_images():
         )
 
         app.config["HSV_MAP"] = hsv_map
+        
+        lighting_map = (
+            df_light
+            .set_index("Well")[["lighting_score", "exposure", "white_balance", "glare"]]
+            .to_dict(orient="index")
+        )
+
+        app.config["LIGHTING_MAP"] = lighting_map
+
         return jsonify({"status": "ok", "wells": len(hsv_map)})
 
     except Exception as e:
         print("HSV processing error:", e)
         return "HSV processing failed", 500
+    
+# =====================================================
+# LIGHTING MAP
+# =====================================================
+@app.route("/get_lighting_results")
+def get_lighting_results():
+    df = app.config.get("LAST_LIGHTING_DF")
+    if df is None:
+        return "<p class='text-muted small'>No lighting analysis yet.</p>"
+
+    return df.to_html(
+        classes="table table-sm table-striped table-hover align-middle",
+        index=False,
+        float_format="%.3f",
+        border=0,
+    )
+
+# =====================================================
+# Upload Hyperspectral Plate Excel (standalone ingest)
+# =====================================================
+@app.route("/upload_hyperspectral_excel", methods=["POST"])
+def upload_hyperspectral_excel():
+    file = request.files.get("hyperspectral_excel")
+    if not file or file.filename == "":
+        return jsonify({"error": "No file uploaded"}), 400
+
+    try:
+        # Load hyperspectral Excel
+        df = pd.read_excel(file)
+
+        # Expect wide-format CV columns: A1_cv, A2_cv, ...
+        cv_cols = [c for c in df.columns if str(c).lower().endswith("_cv")]
+
+        if not cv_cols:
+            return jsonify({
+                "error": "No *_cv columns found. Expected columns like A1_cv, B3_cv, etc."
+            }), 400
+
+        hyperspectral_map = {}
+
+        for col in cv_cols:
+            well = col.replace("_cv", "").strip()
+            vals = pd.to_numeric(df[col], errors="coerce")
+
+            if vals.notna().any():
+                hyperspectral_map[well] = float(vals.mean())
+
+        if not hyperspectral_map:
+            return jsonify({"error": "No valid CV data found"}), 400
+
+        # Store for heatmap overlay
+        app.config["HYPERSPECTRAL_MAP"] = hyperspectral_map
+
+        return jsonify({
+            "status": "ok",
+            "wells": len(hyperspectral_map)
+        })
+
+    except Exception as e:
+        print("Hyperspectral Excel upload error:", e)
+        return jsonify({"error": str(e)}), 500
 
 # =====================================================
 # HSV MAP
@@ -990,6 +1194,19 @@ def upload_hsv_images():
 @app.route("/get_hsv_map")
 def get_hsv_map():
     return jsonify(app.config.get("HSV_MAP", {}))
+# =====================================================
+# LIGHTING MAP
+# =====================================================
+@app.route("/get_lighting_map")
+def get_lighting_map():
+    return jsonify(app.config.get("LIGHTING_MAP", {}))
+
+# =====================================================
+# HYPERSPECTRAL MAP
+# =====================================================
+@app.route("/get_hyperspectral_map")
+def get_hyperspectral_map():
+    return jsonify(app.config.get("HYPERSPECTRAL_MAP", {}))
 
 # =====================================================
 # INTERNAL SELF-TEST ON STARTUP
@@ -1024,4 +1241,5 @@ def run_internal_math_self_test():
 # =====================================================
 if __name__ == "__main__":
     run_internal_math_self_test()
+    start_hyperspectral_server()
     app.run(host="0.0.0.0", port=10000)

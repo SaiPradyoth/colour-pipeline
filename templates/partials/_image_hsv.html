@@ -41,6 +41,20 @@
     </div>
   </div>
 
+  <!-- LIGHTING DIAGNOSTICS -->
+  <div class="card-elevated mb-4">
+    <h5 class="card-title">Lighting Diagnostics</h5>
+    <p class="card-subtitle">
+      Automatic evaluation of illumination uniformity, exposure, glare, and white balance.
+    </p>
+
+    <div id="lighting-results" class="small">
+      <p class="text-muted small">
+        Upload images to view lighting diagnostics.
+      </p>
+    </div>
+  </div>
+
   <!-- FUSION VIEW -->
 <div class="card-elevated">
   <h5 class="card-title">Fusion View</h5>
@@ -52,7 +66,7 @@
   <div class="d-flex gap-2 mb-2">
     <button class="btn btn-sm btn-outline-secondary" id="toggle-diagnostics">
       Show diagnostics
-    </button>
+    </button>                                                                                                                                                                                                                                                  cv
 
     <a href="/download_fusion_csv" class="btn btn-sm btn-outline-primary">
       Download CSV
@@ -61,7 +75,13 @@
     <a href="/download_fusion_pdf" class="btn btn-sm btn-outline-primary">
       Download PDF
     </a>
+   
+    <a href="/download_hsv_lighting_csv" class="btn btn-sm btn-outline-primary">
+      Download HSV + Lighting CSV
+    </a>
+
   </div>
+
 
   <!-- Core Table -->
   <div id="fusion-results-core"></div>

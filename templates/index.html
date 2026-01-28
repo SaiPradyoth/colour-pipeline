@@ -455,6 +455,9 @@
     <!-- HEATMAP PAGE -->
     {% include "partials/_heatmap.html" %}
 
+    <!-- HYPERSPECTRAL PAGE -->
+    {% include "partials/_hyperspectral.html" %}
+
     <!-- SPECTRAL PAGE -->
     {% include "partials/_spectral.html" %}
 
@@ -477,19 +480,21 @@
 </div>
 
 <script>
-let spectralChart = null;
 /* ---------------------------------------
    GLOBAL CONSTANTS FROM SERVER
 --------------------------------------- */
 const FILE_TOKEN      = "{{ file_token or '' }}";
-const DETECTED_WELLS  = {{ detected_wells | tojson if detected_wells else "[]" }};
+window.DETECTED_WELLS = {{ detected_wells | tojson if detected_wells else "[]" }};
 const PLATE_ROWS      = {{ plate_rows | tojson if plate_rows else "[]" }};
 const PLATE_COLS      = {{ plate_cols | list | tojson if plate_cols else "[]" }};
+window.PLATE_ROWS = {{ plate_rows | tojson if plate_rows else "ABCDEFGH".split("") }};
+window.PLATE_COLS = {{ plate_cols | list | tojson if plate_cols else range(1,13)|list }};
 const PLATE_TYPE      = "{{ plate_type }}";
 const LAMBDA_MAP      = {{ lambda_map | tojson if lambda_map else "{}" }};
 const WELL_METADATA   = {{ well_metadata | tojson if well_metadata else "null" }};
 const BLANK_INPUT     = "{{ blank_input or '' }}";
 window.HSV_MAP = {{ hsv_map | tojson if hsv_map else "{}" }};
+window.HYPERSPECTRAL_MAP = {{ (hyperspectral_map or {}) | tojson }};
 </script>
 
 <!-- THEME + BASIC UI -->
@@ -528,6 +533,9 @@ window.HSV_MAP = {{ hsv_map | tojson if hsv_map else "{}" }};
 
 <!-- NAVIGATION -->
 <script src="{{ url_for('static', filename='js/core.js') }}"></script>
+
+<!-- HYPERSPECTRAL (isolated, no dependencies) -->
+<script src="{{ url_for('static', filename='js/hyperspectral_upload.js') }}"></script>
 
 </body>
 </html>
