@@ -1,0 +1,6 @@
+{
+  "mini_dataset_v1": {
+    "expected_fail_wells": ["A4"],
+    "expected_pass_wells": ["A1", "A2", "A3"]
+  }
+}

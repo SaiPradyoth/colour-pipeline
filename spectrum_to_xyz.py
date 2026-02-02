@@ -156,7 +156,7 @@ ref_Lab = lab_by_well[REFERENCE_WELL]
 for row in results:
     well = row["Well"]
     Lab = lab_by_well[well]
-    deltaE = colour.delta_E(ref_Lab, Lab)
+    deltaE = colour.delta_E(ref_Lab, Lab, method="CIE 2000")
     row[f"DeltaE_vs_{REFERENCE_WELL}"] = float(deltaE)
 
 print("ΔE computation complete.")

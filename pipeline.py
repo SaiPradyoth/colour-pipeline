@@ -9,7 +9,7 @@ import os
 import pandas as pd
 import numpy as np
 import colour
-
+from colorimetry import compute_xyz_lab_from_absorbance, delta_e2000
 
 # ----------------------------------------------------
 # LOAD DATAFRAME (supports xlsx, xls, csv)
@@ -135,23 +135,9 @@ def process_plate(
 
     whitepoint = colour.CCS_ILLUMINANTS[observer][illuminant_key]
 
-    # Normalization factor
-    XYZ_white = colour.sd_to_XYZ(illum_sd)
-    Y_max = float(XYZ_white[1])
-
-    # ---------------- XYZ + Lab Converter ----------------
-    def compute_xyz_lab(well):
-        absorb = df[well].astype(float).values
-        trans = 10 ** (-absorb)
-
-        if not np.allclose(wavelengths, domain):
-            trans = np.interp(domain, wavelengths, trans)
-
-        sd = colour.SpectralDistribution(trans, domain)
-        XYZ = colour.sd_to_XYZ(sd, illuminant=illum_sd)
-        XYZ_norm = (XYZ / Y_max) * 100
-        Lab = colour.XYZ_to_Lab(XYZ_norm, whitepoint)
-        return XYZ_norm, Lab
+    # Normalization factor (perfect transmittance under the same illuminant)
+    ones_sd = colour.SpectralDistribution(np.ones_like(domain), domain)
+    Y_max = float(colour.sd_to_XYZ(ones_sd, illuminant=illum_sd)[1])
 
     # ---------------- PREP RESULTS ----------------
     results = []
@@ -172,7 +158,8 @@ def process_plate(
     for w in wells:
 
         # -------- XYZ & Lab --------
-        XYZ, Lab = compute_xyz_lab(w)
+        absorb = df[w].astype(float).values
+        XYZ, Lab = compute_xyz_lab_from_absorbance(absorb, wavelengths, domain, illum_sd, whitepoint, Y_max)
 
         # -------- λmax using RAW absorbance --------
         abs_raw = raw_df[w].astype(float).values
@@ -198,12 +185,13 @@ def process_plate(
 
         # -------- ΔE --------
         if reference_mode == "lab":
-            delta_e = float(colour.delta_E(ref_lab, Lab, method="CIE 2000"))
+            delta_e = delta_e2000(ref_lab, Lab)
         else:
             if ref_lab is None:
-                _, ref_Lab = compute_xyz_lab(reference_well)
+                ref_absorb = df[reference_well].astype(float).values
+                _, ref_Lab = compute_xyz_lab_from_absorbance(ref_absorb, wavelengths, domain, illum_sd, whitepoint, Y_max)
                 ref_lab = ref_Lab
-            delta_e = float(colour.delta_E(ref_lab, Lab, method="CIE 2000"))
+            delta_e = delta_e2000(ref_lab, Lab)
 
         # Append results
         results.append({
