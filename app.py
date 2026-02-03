@@ -25,8 +25,14 @@ def is_port_open(port: int) -> bool:
 def start_hyperspectral_server():
     """
     Starts the hyperspectral FastAPI server on port 8001
-    only if it is not already running.
+    only if it is not already running AND FastAPI is installed.
     """
+    try:
+        import fastapi  # noqa: F401
+    except Exception:
+        print("ℹ FastAPI not installed; skipping hyperspectral server startup.")
+        return
+
     HYPER_PORT = 8001
 
     if is_port_open(HYPER_PORT):
@@ -59,6 +65,11 @@ from pipeline import (
     get_wells_spectra,
     get_raw_matrix,
 )
+# =======================================
+# Image analysis pipeline (plate images)
+# =======================================
+from image_pipeline.image_loader import load_images_from_upload
+from image_pipeline.image_analysis import analyze_plate_images
 
 # --------------------------------
 # Flask + basic config
@@ -133,6 +144,10 @@ def safe_str(v):
     if isinstance(v, float) and np.isnan(v):
         return ""
     return str(v)
+
+# =======================================
+# Image pipeline helpers
+# =======================================
 
 
 # =======================================
@@ -500,13 +515,47 @@ def index():
         app.config.pop("LAST_RESULTS_DF", None)
         app.config.pop("LAST_HSV_DF", None)
         app.config.pop("LAST_FUSION_DF", None)
-        # NEW RUN: clear old in-memory analysis outputs
         app.config.pop("LAST_LIGHTING_DF", None)
         app.config.pop("LIGHTING_MAP", None)
-
+        app.config.pop("HSV_MAP", None)
+        app.config.pop("LAST_IMAGE_RESULTS", None)
+        app.config.pop("HYPERSPECTRAL_MAP", None)
         plate_type = request.form.get("plate_type", plate_type)
         illuminant_key = request.form.get("illuminant_key", illuminant_key)
         observer_angle = request.form.get("observer_angle", observer_angle)
+        # -------------------------------
+        # Plate image upload (optional)
+        # -------------------------------
+        plate_images = request.files.getlist("plate_images")
+        if plate_images:
+            temp_dir = None
+            try:
+                pt_for_images = normalize_plate_type(plate_type)
+
+                # loader returns (temp_dir, well_to_image)
+                temp_dir, well_to_image = load_images_from_upload(plate_images)
+
+                # analyze expects well->path mapping
+                image_results = analyze_plate_images(
+                    well_to_image,
+                    plate_type=pt_for_images,
+                    color_space="HSV",
+                    reference_well=reference_well,  # optional; will be None if not set yet
+                )
+                app.config["LAST_IMAGE_RESULTS"] = image_results
+
+            except Exception as e:
+                print("IMAGE PIPELINE ERROR:", e)
+
+            finally:
+                # cleanup extracted temp images
+                try:
+                    from image_pipeline.image_loader import cleanup_temp_dir
+                    cleanup_temp_dir(temp_dir)
+                except Exception:
+                    pass
+                # optional: surface to UI
+                # error = error or f"Plate image processing failed: {e}"
 
         reference_mode = request.form.get("reference_mode", "lab")
         reference_well = (request.form.get("reference_well") or "").strip() or None

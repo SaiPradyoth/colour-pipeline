@@ -1,18 +1,17 @@
 <section id="page-dashboard" class="page-section active">
 
-  <!-- ===============================
-       PRIMARY SPECTRAL UPLOAD
-  =============================== -->
+  <!-- Upload card -->
   <div class="card-elevated mb-4">
     <h5 class="card-title">Upload dataset</h5>
     <p class="card-subtitle">
-      Step 1: Upload spectra. (Optional) Step 2: Upload metadata to annotate wells.
+      Step 1: Upload spectra. (Optional) Step 2: Upload metadata and plate images.
     </p>
 
     <form id="upload-form" method="post" action="/" enctype="multipart/form-data">
       <div class="row g-3 mt-2">
-        <div class="col-lg-7">
 
+        <!-- LEFT COLUMN -->
+        <div class="col-lg-7">
           <!-- Spectra file -->
           <div id="upload-dropzone" class="upload-dropzone">
             <div class="upload-icon fs-1 mb-1">☁️</div>
@@ -32,21 +31,29 @@
           <div id="upload-status" class="small mt-2 text-muted">
             {% if uploaded_filename %}
               Uploaded spectra: {{ uploaded_filename }}
+            {% else %}
+              No spectra uploaded yet.
             {% endif %}
           </div>
 
           <!-- Metadata file -->
           <label class="small fw-bold mt-3">Metadata file (optional)</label>
-          <input id="metadata_file" name="metadata_file" type="file"
-                 accept=".xlsx,.xls,.csv"
-                 class="form-control form-control-sm" />
+          <input
+            id="metadata_file"
+            name="metadata_file"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            class="form-control form-control-sm"
+          />
           <div class="form-text" style="font-size: 0.75rem;">
             Expected columns: <code>Well, Row, Column, Sample, AuNP, Contents, Category</code>
           </div>
+
         </div>
 
+        <!-- RIGHT COLUMN -->
         <div class="col-lg-5">
-          <!-- plate / illuminant / observer -->
+
           <label class="small fw-bold mt-2">Plate type</label>
           <select id="plate_type" name="plate_type" class="form-select form-select-sm">
             <option value="48"  {% if plate_type=='48' %}selected{% endif %}>48-well</option>
@@ -69,91 +76,149 @@
             <option value="10" {% if observer_angle=='10' %}selected{% endif %}>10° (CIE 1964)</option>
           </select>
 
-          <label class="small fw-bold mt-3">Reference well (optional)</label>
+          <!-- Plate images (optional) -->
+          <label class="small fw-bold mt-4">Plate images (optional)</label>
+          <input
+            id="plate_images"
+            name="plate_images"
+            type="file"
+            accept=".zip,.jpg,.jpeg,.png"
+            class="form-control form-control-sm"
+            multiple
+          />
+          <div class="form-text" style="font-size: 0.75rem;">
+            Upload a ZIP or multiple images (jpg/png). Filenames should map to wells (e.g., A1.jpg).
+          </div>
+
+          <!-- BLANK WELL SELECTOR -->
+          <label class="small fw-bold mt-3">Blank / Background Well(s)</label>
+          <select
+            id="blank_wells_select_upload"
+            class="form-select form-select-sm mb-1"
+            multiple
+          ></select>
+          <input
+            type="hidden"
+            id="blank_wells_input_upload"
+            name="blank_wells"
+            value="{{ blank_input or '' }}"
+          />
+          <div class="form-text mb-3" style="font-size: 0.75rem;">
+            Absorbance noise subtraction (use wells with only buffer / ultrapure water).
+          </div>
+
+          <!-- ΔE MODE + REFERENCE WELL -->
+          <label class="small fw-bold mt-3">ΔE Mode</label>
+          <select id="reference_mode" name="reference_mode" class="form-select form-select-sm">
+            <option value="lab"  {% if reference_mode!='well' %}selected{% endif %}>ΔE vs Lab Target</option>
+            <option value="well" {% if reference_mode=='well' %}selected{% endif %}>ΔE vs Reference Well</option>
+          </select>
+
+          <label class="small fw-bold mt-3">Reference Well (for ΔE vs Well)</label>
           <select
             id="reference_well_select_upload"
             name="reference_well"
             class="form-select form-select-sm"
-            data-selected-reference="{{ reference_well or '' }}">
-          </select>
-
+            data-selected-reference="{{ reference_well or '' }}"
+          ></select>
           <div class="form-text mb-2" style="font-size: 0.75rem;">
-            Used only if ΔE mode is set to “vs Reference Well”.
+            Used as ΔE = 0 when “ΔE vs Reference Well” is selected.
           </div>
 
-          <!-- Blank wells -->
-          <label class="small fw-bold mt-3">Blank / Background Well(s)</label>
-          <select id="blank_wells_select_upload"
-                  class="form-select form-select-sm mb-1"
-                  multiple></select>
-          <input type="hidden"
-                 id="blank_wells_input_upload"
-                 name="blank_wells"
-                 value="{{ blank_input or '' }}">
+          <!-- FIXED REFERENCE COLOR TARGET -->
+          <label class="small fw-bold mt-3">ΔE Zero Point Target (Lab mode)</label>
+          <select id="ref_target_preset" name="ref_target_preset" class="form-select form-select-sm mb-2">
+            <option value="WhiteTile" {% if ref_target_preset=='WhiteTile' %}selected{% endif %}>Perfect White Tile</option>
+            <option value="Buffer"    {% if ref_target_preset=='Buffer'    %}selected{% endif %}>Blank / Buffer</option>
+            <option value="Black"     {% if ref_target_preset=='Black'     %}selected{% endif %}>Perfect Black</option>
+            <option value="Custom"    {% if ref_target_preset=='Custom'    %}selected{% endif %}>Custom L*a*b*</option>
+          </select>
+
+          <div id="custom_lab_inputs" class="row g-2" style="display: none;">
+            <div class="col-4">
+              <input type="number" step="0.01" name="custom_L" class="form-control form-control-sm" placeholder="L*" value="{{ custom_L or '' }}">
+            </div>
+            <div class="col-4">
+              <input type="number" step="0.01" name="custom_a" class="form-control form-control-sm" placeholder="a*" value="{{ custom_a or '' }}">
+            </div>
+            <div class="col-4">
+              <input type="number" step="0.01" name="custom_b" class="form-control form-control-sm" placeholder="b*" value="{{ custom_b or '' }}">
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <button class="btn btn-primary mt-3 px-4" type="submit">
-        Run pipeline
-      </button>
+      <button class="btn btn-primary mt-3 px-4" type="submit">Run pipeline</button>
 
       {% if error %}
-      <div class="alert alert-danger mt-3">{{ error }}</div>
+        <div class="alert alert-danger mt-3">{{ error }}</div>
       {% endif %}
     </form>
   </div>
 
   <!-- ===============================
        HYPERSPECTRAL (OPTIONAL)
+       (ALWAYS VISIBLE)
   =============================== -->
   <div class="card-elevated mb-4">
     <h5 class="card-title">Hyperspectral overlay (optional)</h5>
     <p class="card-subtitle">
       Upload a hyperspectral-derived plate Excel to overlay spectral QC or band-derived metrics.
+      <span class="text-muted small">(You can upload before or after running the spectral pipeline.)</span>
     </p>
 
-    <form id="hyperspectral-upload-form"
-          method="post"
-          action="/upload_hyperspectral_excel"
-          enctype="multipart/form-data">
-
-      <input type="file"
-             name="hyperspectral_excel"
-             accept=".xlsx"
-             class="form-control form-control-sm mb-2"
-             required />
+    <form
+      id="hyperspectral-upload-form"
+      method="post"
+      action="/upload_hyperspectral_excel"
+      enctype="multipart/form-data"
+    >
+      <input
+        type="file"
+        name="hyperspectral_excel"
+        accept=".xlsx"
+        class="form-control form-control-sm mb-2"
+        required
+      />
 
       <div class="form-text small">
-        Expected format: <code>Wavelength</code> + <code>A1…H12</code> (+ optional *_cv, *_std).
+        Expected format: wide CV columns like <code>A1_cv</code>, <code>B3_cv</code>, ...
       </div>
 
-      {% if hyperspectral_filename %}
-        <div class="small text-success mt-2">
-          ✔ Hyperspectral file loaded: {{ hyperspectral_filename }}
-        </div>
-      {% endif %}
-
-      {% if hyperspectral_error %}
-        <div class="small text-danger mt-2">
-          {{ hyperspectral_error }}
-        </div>
-      {% endif %}
-
-      <button class="btn btn-outline-primary btn-sm mt-3">
+      <button class="btn btn-outline-primary btn-sm mt-3" type="submit">
         Upload hyperspectral data
       </button>
+
+      <div id="hyperspectral-upload-status" class="small mt-2 text-muted"></div>
     </form>
   </div>
 
   {% if table_html %}
-  <!-- Results table -->
-  <div class="card-elevated mb-4">
-    <h5 class="card-title">Results table</h5>
-    <p class="card-subtitle">XYZ, Lab and ΔE2000 per well.</p>
-    <div id="results-table" class="table-responsive mt-2">
-      {{ table_html | safe }}
+    <!-- Overview + Reference summary -->
+    <div class="row g-3 mb-4">
+      <div class="col-lg-6">
+        <div class="card-elevated h-100">
+          <h5 class="card-title">Reference &amp; export</h5>
+          <p class="card-subtitle mb-0">
+            ΔE2000 is relative to: <strong>{{ reference_label or 'Target' }}</strong><br/>
+            <span class="small text-muted">Target description: {{ target_display }}</span>
+          </p>
+          <p class="small text-muted mt-3 mb-0">
+            Adjust reference, blanks, and export options in the ΔE Heatmap view.
+          </p>
+        </div>
+      </div>
     </div>
-  </div>
+
+    <!-- Results table -->
+    <div class="card-elevated mb-4">
+      <h5 class="card-title">Results table</h5>
+      <p class="card-subtitle">XYZ, Lab and ΔE2000 per well.</p>
+      <div id="results-table" class="table-responsive mt-2">
+        {{ table_html | safe }}
+      </div>
+    </div>
   {% endif %}
 
 </section>
